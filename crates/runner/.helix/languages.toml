@@ -1,0 +1,7 @@
+[[language]]
+name = "rust"
+
+[language.config]
+# This eliminates a spurious "no crate for 'test'" error
+checkOnSave.allTargets = false
+checkOnSave.command = "clippy"
