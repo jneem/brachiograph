@@ -59,14 +59,16 @@ fn main() -> ! {
     let pwm_pin = gpioa.pa0.into_alternate_push_pull(&mut gpioa.crl);
     let mut pwm = dp
         .TIM2
-        .pwm_hz::<Tim2NoRemap, _, _>(pwm_pin, &mut afio.mapr, 1.kHz(), &clocks);
-    pwm.enable(Channel::C1);
+        .pwm_hz::<Tim2NoRemap, _, _>(pwm_pin, &mut afio.mapr, 50.Hz(), &clocks);
+    defmt::println!("period {}", pwm.get_period());
     pwm.set_period(ms(500).into_rate());
     let max = pwm.get_max_duty();
     defmt::println!("max duty {}", max);
-    pwm.set_duty(Channel::C1, max / 2);
+    pwm.set_duty(Channel::C1, max / 20);
+    pwm.enable(Channel::C1);
 
     loop {
+        /*
         if usb_dev.poll(&mut [&mut serial]) {
             defmt::println!("polled");
             led.set_low();
@@ -76,5 +78,6 @@ fn main() -> ! {
             }
             led.set_high();
         }
+        */
     }
 }

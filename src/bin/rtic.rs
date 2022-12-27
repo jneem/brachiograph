@@ -3,36 +3,135 @@
 
 use brachiograph as _;
 use brachiograph_protocol::{Angle, Op, OpParseErr};
+use fixed_macro::fixed;
 use ringbuffer::{ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferWrite};
-use stm32f1xx_hal::{
-    device::{TIM2, TIM3},
-    gpio::{Alternate, Pin, PA6, PA7, PB0},
-    timer::{Ch, PwmChannel, PwmHz, Tim3NoRemap},
-};
+use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
 use usb_device::prelude::*;
 use usbd_serial::SerialPort; // global logger + panicking-behavior + memory layout
 
 type Fixed = fixed::types::I20F12;
-type Instant = fugit::TimerInstantU64<100>;
 type Duration = fugit::TimerDurationU64<100>;
-
-#[derive(Default, Clone)]
-pub struct BrachiographState {
-    shoulder: Angle,
-    elbow: Angle,
-    pen_down: bool,
-}
-
-pub struct OpInProgress {
-    start: Instant,
-    start_state: BrachiographState,
-    op: Op,
-}
 
 #[derive(Default)]
 pub struct OpQueue {
     queue: RingBuffer<Op, 4>,
-    in_progress: Option<OpInProgress>,
+}
+
+// TODO: invent a data format for this
+fn shoulder_config() -> brachiograph_protocol::pwm::Pwm {
+    use brachiograph_protocol::pwm::CalibrationEntry;
+    brachiograph_protocol::pwm::Pwm {
+        calib: [
+            CalibrationEntry {
+                degrees: -37,
+                duty_ratio: fixed!(0.11871: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -30,
+                duty_ratio: fixed!(0.113969: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -15,
+                duty_ratio: fixed!(0.104492: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 0,
+                duty_ratio: fixed!(0.095458: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 15,
+                duty_ratio: fixed!(0.087402: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 30,
+                duty_ratio: fixed!(0.078857: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 45,
+                duty_ratio: fixed!(0.071289: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 60,
+                duty_ratio: fixed!(0.063964: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 75,
+                duty_ratio: fixed!(0.056884: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 90,
+                duty_ratio: fixed!(0.049804: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 105,
+                duty_ratio: fixed!(0.041992: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 120,
+                duty_ratio: fixed!(0.033935: U0F16),
+            },
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+fn elbow_config() -> brachiograph_protocol::pwm::Pwm {
+    use brachiograph_protocol::pwm::CalibrationEntry;
+    brachiograph_protocol::pwm::Pwm {
+        calib: [
+            CalibrationEntry {
+                degrees: -90,
+                duty_ratio: fixed!(0.114014: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -75,
+                duty_ratio: fixed!(0.105957: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -60,
+                duty_ratio: fixed!(0.105957: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -15,
+                duty_ratio: fixed!(0.081787: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -45,
+                duty_ratio: fixed!(0.097900: U0F16),
+            },
+            CalibrationEntry {
+                degrees: -30,
+                duty_ratio: fixed!(0.089843: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 0,
+                duty_ratio: fixed!(0.073974: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 15,
+                duty_ratio: fixed!(0.065917: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 30,
+                duty_ratio: fixed!(0.058349: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 45,
+                duty_ratio: fixed!(0.051269: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 60,
+                duty_ratio: fixed!(0.043457: U0F16),
+            },
+            CalibrationEntry {
+                degrees: 75,
+                duty_ratio: fixed!(0.035400: U0F16),
+            },
+        ]
+        .into_iter()
+        .collect(),
+    }
 }
 
 impl OpQueue {
@@ -41,9 +140,7 @@ impl OpQueue {
             Err(())
         } else {
             self.queue.push(op);
-            if self.in_progress.is_none() {
-                app::tick::spawn().unwrap();
-            }
+            app::tick::spawn().unwrap();
             Ok(())
         }
     }
@@ -96,24 +193,30 @@ impl CmdBuf {
     }
 }
 
-fn set_angle<const C: u8>(pwm: &mut PwmChannel<TIM3, C>, angle: Fixed) {
+fn get_max_duty<const C: u8>(pwm: &PwmChannel<TIM3, C>) -> Fixed {
     let max = pwm.get_max_duty();
-    // 10% duty means 0 degrees, 20% means 180 degrees, and everything else is linearly interpolated.
+    // 2.5% duty means 0 degrees, 12.5% means 180 degrees, and everything else is linearly interpolated.
     // max duty of zero means max duty of 2^16.
-    let max: Fixed = if max == 0 {
+    if max == 0 {
         Fixed::from_num(1i32 << 16)
     } else {
-        max.into()
-    };
-    // This should be ensured elsewhere, but just in case.
-    let angle = angle.clamp(20u8.into(), 160u8.into());
-    let ratio = angle / 180;
-    let duty = (ratio + Fixed::from_num(1)) * max / 10;
+        Fixed::from_num(max)
+    }
+}
+
+fn set_angle<const C: u8>(
+    pwm: &mut PwmChannel<TIM3, C>,
+    cfg: &brachiograph_protocol::pwm::Pwm,
+    angle: Angle,
+) {
+    let duty_ratio = Fixed::from_num(cfg.duty(angle).unwrap()); // FIXME
+    let max = get_max_duty(pwm);
+    let duty = max * duty_ratio;
     defmt::println!(
         "setting duty {} (of {}) for angle {}",
         duty.to_num::<u32>(),
         pwm.get_max_duty(),
-        angle.to_num::<u32>()
+        angle.degrees().to_num::<i32>()
     );
     pwm.set_duty(duty.to_num());
 }
@@ -122,20 +225,35 @@ pub struct Pwms {
     shoulder: PwmChannel<TIM3, 0>,
     elbow: PwmChannel<TIM3, 1>,
     pen: PwmChannel<TIM3, 2>,
-    /*
-    pwms: PwmHz<
-        TIM3,
-        Tim3NoRemap,
-        (Ch<0>, Ch<1>, Ch<2>),
-        (PA6<Alternate>, PA7<Alternate>, PB0<Alternate>),
-    >,
-    */
+    shoulder_cfg: brachiograph_protocol::pwm::Pwm,
+    elbow_cfg: brachiograph_protocol::pwm::Pwm,
+    pen_cfg: brachiograph_protocol::pwm::TogglePwm,
+}
+
+impl Pwms {
+    pub fn set_shoulder(&mut self, angle: Angle) {
+        set_angle(&mut self.shoulder, &self.shoulder_cfg, angle)
+    }
+
+    pub fn set_elbow(&mut self, angle: Angle) {
+        set_angle(&mut self.elbow, &self.elbow_cfg, angle)
+    }
+
+    pub fn pen_down(&mut self, down: bool) {
+        let duty_ratio = Fixed::from_num(if down {
+            self.pen_cfg.on
+        } else {
+            self.pen_cfg.off
+        });
+        let duty = get_max_duty(&self.pen) * duty_ratio;
+        self.pen.set_duty(duty.to_num());
+    }
 }
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
-    use super::{BrachiographState, CmdBuf, Duration, Fixed, OpInProgress, OpQueue, Pwms};
-    use brachiograph_protocol::Op;
+    use super::{CmdBuf, Duration, OpQueue, Pwms};
+    use brachiograph_protocol::{Brachiograph, Op};
     use cortex_m::asm;
     use ringbuffer::RingBufferRead;
     use stm32f1xx_hal::{
@@ -155,7 +273,7 @@ mod app {
         usb_dev: UsbDevice<'static, UsbBusType>,
         serial: SerialPort<'static, UsbBusType>,
         op_queue: OpQueue,
-        state: BrachiographState,
+        state: Brachiograph,
         led: stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
     }
 
@@ -220,25 +338,39 @@ mod app {
         let (shoulder, elbow, pen) = cx
             .device
             .TIM3
-            .pwm_hz::<stm32f1xx_hal::timer::Tim3NoRemap, _, _>(
+            .pwm_us::<stm32f1xx_hal::timer::Tim3NoRemap, _, _>(
                 (shoulder_pin, elbow_pin, pen_pin),
                 &mut afio.mapr,
-                50.Hz(),
+                fugit::Duration::<u32, 1, 1_000_000>::millis(20),
                 &clocks,
             )
             .split();
-        let pwms = super::Pwms {
+        let shoulder_cfg = super::shoulder_config();
+        let elbow_cfg = super::elbow_config();
+        let pen_cfg = brachiograph_protocol::pwm::TogglePwm::pen();
+        let mut pwms = super::Pwms {
             shoulder,
             elbow,
             pen,
+            shoulder_cfg,
+            elbow_cfg,
+            pen_cfg,
         };
+        let state = Brachiograph::new(0, 8);
+        let init_angles = state.angles();
+        pwms.set_shoulder(init_angles.shoulder);
+        pwms.set_elbow(init_angles.elbow);
+        pwms.pen_down(false);
+        pwms.shoulder.enable();
+        pwms.elbow.enable();
+        pwms.pen.enable();
 
         (
             Shared {
                 usb_dev,
                 serial,
                 led,
-                state: BrachiographState::default(),
+                state,
                 op_queue: OpQueue::default(),
             },
             Local {
@@ -279,59 +411,34 @@ mod app {
         let pwms = cx.local.pwms;
         (&mut op_queue, &mut state).lock(|op_queue, state| {
             let now = monotonics::now();
-            if let Some(in_progress) = &op_queue.in_progress {
-                let done = match &in_progress.op {
-                    // TODO: should add implicit delays to penup and pendown
-                    Op::PenUp => {
-                        // TODO: set angle
-                        state.pen_down = false;
-                        true
-                    }
-                    Op::PenDown => {
-                        // TODO: set angle
-                        state.pen_down = true;
-                        true
-                    }
-                    Op::SetAngles(set_angles) => {
-                        let duration = now.checked_duration_since(in_progress.start).unwrap();
-                        let total: Fixed = set_angles.delay.to_millis().into();
-                        let ratio = if total > 0 {
-                            let actual: Fixed = (duration.to_millis() as u16).into();
-                            (actual / total).min(1u8.into())
-                        } else {
-                            Fixed::from_num(1)
-                        };
-                        let shoulder = in_progress
-                            .start_state
-                            .shoulder
-                            .interpolate(set_angles.shoulder, ratio);
-                        let elbow = in_progress
-                            .start_state
-                            .shoulder
-                            .interpolate(set_angles.elbow, ratio);
-                        state.shoulder = shoulder;
-                        state.elbow = elbow;
-                        super::set_angle(&mut pwms.shoulder, shoulder.degrees());
-                        super::set_angle(&mut pwms.elbow, elbow.degrees());
-                        defmt::println!("shoulder angle: {:?}", shoulder);
-                        ratio >= 1
-                    }
-                };
-                if done {
-                    defmt::println!("done with op {:?}", in_progress.op);
-                    op_queue.in_progress = None;
-                }
-            }
-            if op_queue.in_progress.is_none() {
+            // TODO: no better way to convert instants??
+            let geom_now = fugit::Instant::<u64, 1, 1_000_000>::from_ticks(0)
+                + now.duration_since_epoch().convert();
+            let geom = state.update(geom_now);
+            pwms.set_shoulder(geom.shoulder);
+            pwms.set_elbow(geom.elbow);
+
+            if let Some(mut resting) = state.resting() {
                 if let Some(op) = op_queue.queue.dequeue() {
-                    op_queue.in_progress = Some(OpInProgress {
-                        start: now,
-                        op,
-                        start_state: state.clone(),
-                    });
+                    match op {
+                        Op::PenUp => {
+                            resting.pen_up();
+                            pwms.pen_down(false);
+                        }
+                        Op::PenDown => {
+                            resting.pen_down();
+                            pwms.pen_down(true);
+                        }
+                        Op::MoveTo(point) => {
+                            // TODO: error handling
+                            if resting.move_to(geom_now, point.x, point.y).is_err() {
+                                defmt::println!("failed to move");
+                            }
+                        }
+                    }
                 }
             }
-            if op_queue.in_progress.is_some() {
+            if state.resting().is_none() {
                 tick::spawn_after(Duration::millis(10)).unwrap();
             }
         })
