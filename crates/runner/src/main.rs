@@ -1,8 +1,7 @@
 #![no_main]
 #![no_std]
 
-use brachiograph as _;
-use brachiograph_protocol::{Angle, Op, OpParseErr};
+use brachiograph::{Angle, Op, OpParseErr};
 use fixed_macro::fixed;
 use ringbuffer::{ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferWrite};
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
@@ -18,9 +17,9 @@ pub struct OpQueue {
 }
 
 // TODO: invent a data format for this
-fn shoulder_config() -> brachiograph_protocol::pwm::Pwm {
-    use brachiograph_protocol::pwm::CalibrationEntry;
-    brachiograph_protocol::pwm::Pwm {
+fn shoulder_config() -> brachiograph::pwm::Pwm {
+    use brachiograph::pwm::CalibrationEntry;
+    brachiograph::pwm::Pwm {
         calib: [
             CalibrationEntry {
                 degrees: -37,
@@ -76,9 +75,9 @@ fn shoulder_config() -> brachiograph_protocol::pwm::Pwm {
     }
 }
 
-fn elbow_config() -> brachiograph_protocol::pwm::Pwm {
-    use brachiograph_protocol::pwm::CalibrationEntry;
-    brachiograph_protocol::pwm::Pwm {
+fn elbow_config() -> brachiograph::pwm::Pwm {
+    use brachiograph::pwm::CalibrationEntry;
+    brachiograph::pwm::Pwm {
         calib: [
             CalibrationEntry {
                 degrees: -90,
@@ -206,7 +205,7 @@ fn get_max_duty<const C: u8>(pwm: &PwmChannel<TIM3, C>) -> Fixed {
 
 fn set_angle<const C: u8>(
     pwm: &mut PwmChannel<TIM3, C>,
-    cfg: &brachiograph_protocol::pwm::Pwm,
+    cfg: &brachiograph::pwm::Pwm,
     angle: Angle,
 ) {
     let duty_ratio = Fixed::from_num(cfg.duty(angle).unwrap()); // FIXME
@@ -225,9 +224,9 @@ pub struct Pwms {
     shoulder: PwmChannel<TIM3, 0>,
     elbow: PwmChannel<TIM3, 1>,
     pen: PwmChannel<TIM3, 2>,
-    shoulder_cfg: brachiograph_protocol::pwm::Pwm,
-    elbow_cfg: brachiograph_protocol::pwm::Pwm,
-    pen_cfg: brachiograph_protocol::pwm::TogglePwm,
+    shoulder_cfg: brachiograph::pwm::Pwm,
+    elbow_cfg: brachiograph::pwm::Pwm,
+    pen_cfg: brachiograph::pwm::TogglePwm,
 }
 
 impl Pwms {
@@ -253,7 +252,7 @@ impl Pwms {
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
     use super::{CmdBuf, Duration, OpQueue, Pwms};
-    use brachiograph_protocol::{Brachiograph, Op};
+    use brachiograph::{Brachiograph, Op};
     use cortex_m::asm;
     use ringbuffer::RingBufferRead;
     use stm32f1xx_hal::{
@@ -347,7 +346,7 @@ mod app {
             .split();
         let shoulder_cfg = super::shoulder_config();
         let elbow_cfg = super::elbow_config();
-        let pen_cfg = brachiograph_protocol::pwm::TogglePwm::pen();
+        let pen_cfg = brachiograph::pwm::TogglePwm::pen();
         let mut pwms = super::Pwms {
             shoulder,
             elbow,
@@ -510,4 +509,39 @@ fn usb_poll<B: usb_device::bus::UsbBus>(
         _ => {}
     }
     led.set_high();
+}
+
+use defmt_rtt as _; // global logger
+
+// TODO(5) adjust HAL import
+use stm32f1xx_hal as _; // memory layout
+
+use panic_probe as _;
+
+// same panicking *behavior* as `panic-probe` but doesn't print a panic message
+// this prevents the panic message being printed *twice* when `defmt::panic` is invoked
+#[defmt::panic_handler]
+fn panic() -> ! {
+    cortex_m::asm::udf()
+}
+
+/// Terminates the application and makes `probe-run` exit with exit-code = 0
+pub fn exit() -> ! {
+    loop {
+        cortex_m::asm::bkpt();
+    }
+}
+
+// defmt-test 0.3.0 has the limitation that this `#[tests]` attribute can only be used
+// once within a crate. the module can be in any file but there can only be at most
+// one `#[tests]` module in this library crate
+#[cfg(test)]
+#[defmt_test::tests]
+mod unit_tests {
+    use defmt::assert;
+
+    #[test]
+    fn it_works() {
+        assert!(true)
+    }
 }
