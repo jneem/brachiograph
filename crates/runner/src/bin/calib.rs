@@ -1,15 +1,13 @@
 #![no_main]
 #![no_std]
 
-use brachiograph as _;
-use fixed_macro::fixed;
+use brachiograph_runner as _;
+
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
 use usb_device::prelude::*;
 use usbd_serial::SerialPort; // global logger + panicking-behavior + memory layout
 
 type Fixed = fixed::types::I20F12;
-type Instant = fugit::TimerInstantU64<100>;
-type Duration = fugit::TimerDurationU64<100>;
 
 fn set_duty<const C: u8>(pwm: &mut PwmChannel<TIM3, C>, inc: i16) {
     let max = pwm.get_max_duty();
@@ -29,10 +27,8 @@ pub struct Pwms {
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
-    use super::{Duration, Fixed, Pwms};
-    use brachiograph_protocol::Op;
+    use super::Pwms;
     use cortex_m::asm;
-    use ringbuffer::RingBufferRead;
     use stm32f1xx_hal::{
         prelude::*,
         usb::{Peripheral, UsbBus, UsbBusType},
@@ -78,7 +74,6 @@ mod app {
         let mono = Systick::new(cx.core.SYST, clocks.hclk().to_Hz());
 
         let mut gpioa = cx.device.GPIOA.split();
-        let mut gpiob = cx.device.GPIOB.split();
 
         let mut usb_dp = gpioa.pa12.into_push_pull_output(&mut gpioa.crh);
         usb_dp.set_low();
