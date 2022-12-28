@@ -103,11 +103,13 @@ impl<'a> RestingBrachiograph<'a> {
             start: now,
             dur: Duration::millis((seconds * 1000).to_num()),
         };
+        /*
         defmt::println!(
             "interpolating dist {} units in {} ms",
             dist.to_num::<i32>(),
             (seconds * 1000).to_num::<i32>()
         );
+        */
         self.inner.state = State::Moving(mov);
         Ok(())
     }
@@ -132,8 +134,12 @@ impl Brachiograph {
             pos,
             state: State::Resting(pos),
             pen_down: false,
-            speed: Fixed::from_num(12),
+            speed: Fixed::from_num(4),
         }
+    }
+
+    pub fn config(&self) -> &geom::Config {
+        &self.config
     }
 
     pub fn angles(&self) -> geom::State {

@@ -3,19 +3,18 @@
 
 use brachiograph_runner as _;
 
-use brachiograph::{Angle, Op, OpParseErr};
+use brachiograph::{Angle, Op};
 use fixed_macro::fixed;
 use ringbuffer::{ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferWrite};
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
-use usb_device::prelude::*;
-use usbd_serial::SerialPort; // global logger + panicking-behavior + memory layout
 
 type Fixed = fixed::types::I20F12;
-type Duration = fugit::TimerDurationU64<100>;
+type Duration = fugit::TimerDurationU64<50>;
 
 #[derive(Default)]
 pub struct OpQueue {
-    queue: RingBuffer<Op, 4>,
+    // TODO: would be nice if we can make this big, but it overflows the stack. How to store it elsewhere?
+    queue: RingBuffer<Op, 32>,
 }
 
 // TODO: invent a data format for this
@@ -140,57 +139,13 @@ impl OpQueue {
         if self.queue.is_full() {
             Err(())
         } else {
+            //defmt::println!("push op {}", op);
             self.queue.push(op);
-            app::tick::spawn().unwrap();
+            if self.queue.len() == 1 {
+                app::tick::spawn().unwrap();
+            }
             Ok(())
         }
-    }
-}
-
-pub struct CmdBuf {
-    // TODO: use FixedVec or something.
-    buf: [u8; 128],
-    end: usize,
-}
-
-impl Default for CmdBuf {
-    fn default() -> CmdBuf {
-        CmdBuf {
-            buf: [0; 128],
-            end: 0,
-        }
-    }
-}
-
-impl CmdBuf {
-    fn parse(&mut self) -> Option<Result<Op, OpParseErr>> {
-        defmt::println!("parsing {:?}", self.buf[..self.end]);
-        if let Some(idx) = self.buf[..self.end].iter().position(|&c| c == b'\n') {
-            // FIXME: unwrap
-            let buf = core::str::from_utf8(&self.buf[..idx]).unwrap();
-            let res = buf.parse();
-            defmt::println!("shifting back by {}", idx);
-            for i in (idx + 1)..self.end {
-                self.buf[i - idx - 1] = self.buf[i];
-            }
-            self.end -= idx + 1;
-            Some(res)
-        } else {
-            None
-        }
-    }
-
-    fn buf(&mut self) -> &mut [u8] {
-        &mut self.buf[self.end..]
-    }
-
-    fn extend_by(&mut self, count: usize) {
-        assert!(count.saturating_add(self.end) <= self.buf.len());
-        self.end += count;
-    }
-
-    fn clear(&mut self) {
-        self.end = 0;
     }
 }
 
@@ -213,12 +168,6 @@ fn set_angle<const C: u8>(
     let duty_ratio = Fixed::from_num(cfg.duty(angle).unwrap()); // FIXME
     let max = get_max_duty(pwm);
     let duty = max * duty_ratio;
-    defmt::println!(
-        "setting duty {} (of {}) for angle {}",
-        duty.to_num::<u32>(),
-        pwm.get_max_duty(),
-        angle.degrees().to_num::<i32>()
-    );
     pwm.set_duty(duty.to_num());
 }
 
@@ -253,10 +202,11 @@ impl Pwms {
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
-    use super::{CmdBuf, Duration, OpQueue, Pwms};
-    use brachiograph::{Brachiograph, Op};
+    use super::{Duration, OpQueue, Pwms};
+    use brachiograph::{geom, Brachiograph, Op};
+    use brachiograph_runner::serial::{Status, UsbSerial};
     use cortex_m::asm;
-    use ringbuffer::RingBufferRead;
+    use ringbuffer::{RingBuffer, RingBufferRead};
     use stm32f1xx_hal::{
         prelude::*,
         usb::{Peripheral, UsbBus, UsbBusType},
@@ -267,27 +217,24 @@ mod app {
 
     // TODO: what is the SYST frequency?
     #[monotonic(binds = SysTick, default = true)]
-    type Mono = Systick<100>;
+    type Mono = Systick<50>;
 
     #[shared]
     struct Shared {
-        usb_dev: UsbDevice<'static, UsbBusType>,
-        serial: SerialPort<'static, UsbBusType>,
+        serial: UsbSerial<Op, Status>,
         op_queue: OpQueue,
         state: Brachiograph,
-        led: stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
+        _led: stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
     }
 
     #[local]
     struct Local {
-        cmd_buf: CmdBuf,
         pwms: Pwms,
+        geom_config: geom::Config,
     }
 
     #[init]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        defmt::println!("Hello, world!");
-
         static mut USB_BUS: Option<usb_device::bus::UsbBusAllocator<UsbBusType>> = None;
 
         let mut flash = cx.device.FLASH.constrain();
@@ -301,7 +248,6 @@ mod app {
             .freeze(&mut flash.acr);
 
         assert!(clocks.usbclk_valid());
-        defmt::println!("hclk rate: {:?}", clocks.hclk().to_Hz());
         let mono = Systick::new(cx.core.SYST, clocks.hclk().to_Hz());
 
         let mut gpioa = cx.device.GPIOA.split();
@@ -327,6 +273,7 @@ mod app {
             .serial_number("TEST")
             .device_class(USB_CLASS_CDC)
             .build();
+        let serial = UsbSerial::new(usb_dev, serial);
 
         let led = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
         let mut timer = cx.device.TIM1.counter_ms(&clocks);
@@ -366,43 +313,51 @@ mod app {
         pwms.elbow.enable();
         pwms.pen.enable();
 
+        let geom_config = state.config().clone();
+
         (
             Shared {
-                usb_dev,
                 serial,
-                led,
+                _led: led,
                 state,
                 op_queue: OpQueue::default(),
             },
-            Local {
-                cmd_buf: CmdBuf::default(),
-                pwms,
-            },
+            Local { pwms, geom_config },
             init::Monotonics(mono),
         )
     }
 
-    #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial, led])]
-    fn usb_tx(cx: usb_tx::Context) {
-        let mut usb_dev = cx.shared.usb_dev;
-        let mut serial = cx.shared.serial;
-        let mut led = cx.shared.led;
-        (&mut usb_dev, &mut serial, &mut led)
-            .lock(|usb_dev, serial, led| super::usb_poll(usb_dev, serial, led))
+    #[task(binds = USB_HP_CAN_TX, shared = [serial])]
+    fn usb_tx(_cx: usb_tx::Context) {
+        // TODO: I haven't ever seen this get called...
+        // Doc says "USB High Priority or CAN TX"
     }
 
-    #[task(binds = USB_LP_CAN_RX0, shared = [usb_dev, serial, op_queue, led], local = [cmd_buf])]
+    #[task(binds = USB_LP_CAN_RX0, shared = [serial, op_queue], local = [geom_config])]
     fn usb_rx0(cx: usb_rx0::Context) {
-        let mut usb_dev = cx.shared.usb_dev;
         let mut serial = cx.shared.serial;
         let mut op_queue = cx.shared.op_queue;
-        let mut led = cx.shared.led;
-        let cmd_buf = cx.local.cmd_buf;
-        (&mut usb_dev, &mut serial, &mut op_queue, &mut led).lock(
-            |usb_dev, serial, op_queue, led| {
-                super::usb_read(usb_dev, serial, cmd_buf, op_queue, led)
-            },
-        )
+        let geom_config = cx.local.geom_config;
+        (&mut serial, &mut op_queue).lock(|serial, op_queue| {
+            if !serial.poll() {
+                return;
+            }
+            while let Some(op) = serial.read() {
+                if let Op::MoveTo(p) = &op {
+                    if !geom_config.coord_is_valid(p.x, p.y) {
+                        let _ = serial.send(Status::Nack);
+                        continue;
+                    }
+                }
+
+                if op_queue.enqueue(op).is_err() {
+                    let _ = serial.send(Status::QueueFull);
+                } else {
+                    let _ = serial.send(Status::Ack);
+                }
+            }
+            serial.write();
+        })
     }
 
     #[task(shared = [op_queue, state], local = [pwms])]
@@ -421,6 +376,7 @@ mod app {
 
             if let Some(mut resting) = state.resting() {
                 if let Some(op) = op_queue.queue.dequeue() {
+                    //defmt::println!("popped op {}", op);
                     match op {
                         Op::PenUp => {
                             resting.pen_up();
@@ -439,76 +395,9 @@ mod app {
                     }
                 }
             }
-            if state.resting().is_none() {
+            if state.resting().is_none() || !op_queue.queue.is_empty() {
                 tick::spawn_after(Duration::millis(10)).unwrap();
             }
         })
     }
-}
-
-fn usb_read<B: usb_device::bus::UsbBus>(
-    usb_dev: &mut UsbDevice<'static, B>,
-    serial: &mut SerialPort<'static, B>,
-    cmd_buf: &mut CmdBuf,
-    op_queue: &mut OpQueue,
-    led: &mut stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
-) {
-    if !usb_dev.poll(&mut [serial]) {
-        return;
-    }
-    if cmd_buf.buf().is_empty() {
-        defmt::println!("ran out of buffer, clearing it");
-        cmd_buf.clear();
-    }
-    let buf = cmd_buf.buf();
-
-    led.set_low();
-    match serial.read(buf) {
-        Ok(count) if count > 0 => {
-            defmt::println!("{}", &buf[0..count]);
-            cmd_buf.extend_by(count);
-
-            if let Some(cmd) = cmd_buf.parse() {
-                match cmd {
-                    Ok(cmd) => {
-                        defmt::println!("{:?}", cmd);
-                        if op_queue.enqueue(cmd).is_err() {
-                            // FIXME: unwrap
-                            serial.write(b"busy\n").unwrap();
-                        }
-                        // TODO: write back
-                    }
-                    Err(e) => {
-                        defmt::println!("Error: {:?}", e);
-                        // TODO: write back
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    led.set_high();
-}
-
-fn usb_poll<B: usb_device::bus::UsbBus>(
-    usb_dev: &mut UsbDevice<'static, B>,
-    serial: &mut SerialPort<'static, B>,
-    led: &mut stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
-) {
-    if !usb_dev.poll(&mut [serial]) {
-        return;
-    }
-    let mut buf = [0u8; 64];
-    led.set_low();
-    match serial.read(&mut buf) {
-        Ok(count) if count > 0 => {
-            for c in buf[0..count].iter_mut() {
-                *c = c.to_ascii_uppercase();
-            }
-            defmt::println!("{}", &buf[0..count]);
-            serial.write(&buf[0..count]).ok();
-        }
-        _ => {}
-    }
-    led.set_high();
 }

@@ -39,6 +39,8 @@ pub struct State {
     pub elbow: Angle,
 }
 
+// TODO: add a config-validation function to check that every point in the x/y range is
+// valid
 impl Config {
     pub fn shoulder_is_valid(&self, shoulder: Angle) -> bool {
         self.shoulder_range.0.degrees() <= shoulder.degrees()
@@ -50,6 +52,7 @@ impl Config {
             && elbow.degrees() <= self.elbow_range.1.degrees()
     }
 
+    // TODO: if we did the pre-validation, this wouldn't need to calculate angles
     pub fn coord_is_valid(&self, x: Fixed, y: Fixed) -> bool {
         self.at_coord_impl(x, y).is_ok()
     }
