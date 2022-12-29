@@ -3,7 +3,7 @@
 
 use brachiograph_runner as _;
 
-use brachiograph::{Angle, Op};
+use brachiograph::{geom, Angle, Op};
 use fixed_macro::fixed;
 use ringbuffer::{ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferWrite};
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
@@ -13,8 +13,9 @@ type Duration = fugit::TimerDurationU64<50>;
 
 #[derive(Default)]
 pub struct OpQueue {
-    // TODO: would be nice if we can make this big, but it overflows the stack. How to store it elsewhere?
-    queue: RingBuffer<Op, 32>,
+    // TODO: would be nice if we can make this big, but it overflows the stack. We can
+    // probably shrink `Op` by a factor of 2 or more.
+    queue: RingBuffer<Op, 128>,
 }
 
 // TODO: invent a data format for this
@@ -181,6 +182,32 @@ pub struct Pwms {
 }
 
 impl Pwms {
+    pub fn init(
+        shoulder: PwmChannel<TIM3, 0>,
+        elbow: PwmChannel<TIM3, 1>,
+        pen: PwmChannel<TIM3, 2>,
+        init_angles: &geom::State,
+    ) -> Pwms {
+        let shoulder_cfg = shoulder_config();
+        let elbow_cfg = elbow_config();
+        let pen_cfg = brachiograph::pwm::TogglePwm::pen();
+        let mut pwms = Pwms {
+            shoulder,
+            elbow,
+            pen,
+            shoulder_cfg,
+            elbow_cfg,
+            pen_cfg,
+        };
+        pwms.set_shoulder(init_angles.shoulder);
+        pwms.set_elbow(init_angles.elbow);
+        pwms.pen_down(false);
+        pwms.shoulder.enable();
+        pwms.elbow.enable();
+        pwms.pen.enable();
+        pwms
+    }
+
     pub fn set_shoulder(&mut self, angle: Angle) {
         set_angle(&mut self.shoulder, &self.shoulder_cfg, angle)
     }
@@ -267,10 +294,10 @@ mod app {
         }
         let usb_bus = unsafe { USB_BUS.as_ref().unwrap() };
         let serial = SerialPort::new(usb_bus);
-        let usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
-            .manufacturer("Cam Bam")
-            .product("Bam")
-            .serial_number("TEST")
+        let usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0xca6d, 0xba6d))
+            .manufacturer("jneem")
+            .product("Brachiograph Serial Interface")
+            .serial_number("brachio-001")
             .device_class(USB_CLASS_CDC)
             .build();
         let serial = UsbSerial::new(usb_dev, serial);
@@ -293,27 +320,10 @@ mod app {
                 &clocks,
             )
             .split();
-        let shoulder_cfg = super::shoulder_config();
-        let elbow_cfg = super::elbow_config();
-        let pen_cfg = brachiograph::pwm::TogglePwm::pen();
-        let mut pwms = super::Pwms {
-            shoulder,
-            elbow,
-            pen,
-            shoulder_cfg,
-            elbow_cfg,
-            pen_cfg,
-        };
-        let state = Brachiograph::new(0, 8);
-        let init_angles = state.angles();
-        pwms.set_shoulder(init_angles.shoulder);
-        pwms.set_elbow(init_angles.elbow);
-        pwms.pen_down(false);
-        pwms.shoulder.enable();
-        pwms.elbow.enable();
-        pwms.pen.enable();
 
+        let state = Brachiograph::new(0, 8);
         let geom_config = state.config().clone();
+        let pwms = Pwms::init(shoulder, elbow, pen, &state.angles());
 
         (
             Shared {
