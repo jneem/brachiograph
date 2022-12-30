@@ -5,17 +5,22 @@ use brachiograph_runner as _;
 
 use brachiograph::{geom, Angle, Op};
 use fixed_macro::fixed;
-use ringbuffer::{ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferWrite};
+use ringbuffer::{
+    ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferExt, RingBufferWrite,
+};
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
 
+const TICK_HZ: u32 = 100;
+
 type Fixed = fixed::types::I20F12;
-type Duration = fugit::TimerDurationU64<50>;
+type Duration = fugit::TimerDurationU64<TICK_HZ>;
 
 #[derive(Default)]
 pub struct OpQueue {
-    // TODO: would be nice if we can make this big, but it overflows the stack. We can
-    // probably shrink `Op` by a factor of 2 or more.
-    queue: RingBuffer<Op, 128>,
+    // TODO: would be sort of nice if we can make this big, but it overflows the stack. We can
+    // probably shrink `Op` by a factor of 2 or more. It isn't a huge deal, though: we're unlikely
+    // to process more than a handful of ops per second, so there's no need to queue up too many.
+    queue: RingBuffer<Op, 64>,
 }
 
 // TODO: invent a data format for this
@@ -140,13 +145,13 @@ impl OpQueue {
         if self.queue.is_full() {
             Err(())
         } else {
-            //defmt::println!("push op {}", op);
             self.queue.push(op);
-            if self.queue.len() == 1 {
-                app::tick::spawn().unwrap();
-            }
             Ok(())
         }
+    }
+
+    fn clear(&mut self) {
+        self.queue.clear();
     }
 }
 
@@ -233,7 +238,7 @@ mod app {
     use brachiograph::{geom, Brachiograph, Op};
     use brachiograph_runner::serial::{Status, UsbSerial};
     use cortex_m::asm;
-    use ringbuffer::{RingBuffer, RingBufferRead};
+    use ringbuffer::RingBufferRead;
     use stm32f1xx_hal::{
         prelude::*,
         usb::{Peripheral, UsbBus, UsbBusType},
@@ -242,9 +247,8 @@ mod app {
     use usb_device::prelude::*;
     use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
-    // TODO: what is the SYST frequency?
     #[monotonic(binds = SysTick, default = true)]
-    type Mono = Systick<50>;
+    type Mono = Systick<{ crate::TICK_HZ }>;
 
     #[shared]
     struct Shared {
@@ -321,9 +325,10 @@ mod app {
             )
             .split();
 
-        let state = Brachiograph::new(0, 8);
+        let state = Brachiograph::new(-8, 8);
         let geom_config = state.config().clone();
         let pwms = Pwms::init(shoulder, elbow, pen, &state.angles());
+        tick::spawn_after(Duration::millis(20)).unwrap();
 
         (
             Shared {
@@ -339,11 +344,12 @@ mod app {
 
     #[task(binds = USB_HP_CAN_TX, shared = [serial])]
     fn usb_tx(_cx: usb_tx::Context) {
+        defmt::println!("can tx");
         // TODO: I haven't ever seen this get called...
         // Doc says "USB High Priority or CAN TX"
     }
 
-    #[task(binds = USB_LP_CAN_RX0, shared = [serial, op_queue], local = [geom_config])]
+    #[task(priority = 2, binds = USB_LP_CAN_RX0, shared = [serial, op_queue], local = [geom_config])]
     fn usb_rx0(cx: usb_rx0::Context) {
         let mut serial = cx.shared.serial;
         let mut op_queue = cx.shared.op_queue;
@@ -358,6 +364,9 @@ mod app {
                         let _ = serial.send(Status::Nack);
                         continue;
                     }
+                } else if matches!(op, Op::Cancel) {
+                    op_queue.clear();
+                    let _ = serial.send(Status::Ack);
                 }
 
                 if op_queue.enqueue(op).is_err() {
@@ -370,7 +379,7 @@ mod app {
         })
     }
 
-    #[task(shared = [op_queue, state], local = [pwms])]
+    #[task(priority = 1, shared = [op_queue, state], local = [pwms])]
     fn tick(cx: tick::Context) {
         let mut op_queue = cx.shared.op_queue;
         let mut state = cx.shared.state;
@@ -402,12 +411,16 @@ mod app {
                                 defmt::println!("failed to move");
                             }
                         }
+                        Op::Cancel => {
+                            defmt::println!("expected cancel to be handled already!");
+                        }
                     }
                 }
             }
-            if state.resting().is_none() || !op_queue.queue.is_empty() {
-                tick::spawn_after(Duration::millis(10)).unwrap();
-            }
+            // TODO: can we have it idle if there's nothing to do? I haven't figured out how to
+            // re-wake it if necessary, since `tick::spawn` panics if `tick` is already running
+            // and I don't know how to *check* if it's running.
+            tick::spawn_after(Duration::millis(20)).unwrap();
         })
     }
 }

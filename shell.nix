@@ -6,6 +6,7 @@ let
     extensions = [ "llvm-tools-preview" ];
     targets = [ "thumbv7m-none-eabi" ];
   };
+  python = pkgs.python3.withPackages (p: [ p.pyserial ]);
 in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
@@ -19,5 +20,6 @@ pkgs.mkShell {
     cargo-binutils
     openocd
     gdb
+    python
   ];
 }

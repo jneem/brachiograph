@@ -95,7 +95,6 @@ where
         loop {
             match self.serial.read(&mut buf) {
                 Ok(count) => {
-                    defmt::println!("read {:?}", core::str::from_utf8(&buf[..count]).ok());
                     // unwrap is ok because we checked capacity
                     self.read_buf.try_extend_from_slice(&buf[..count]).unwrap();
                     if count < READ_SIZE || self.read_buf.len() > BUF_SIZE - READ_SIZE {
@@ -122,10 +121,6 @@ where
                 );
             }
             self.read_buf.drain(..=idx);
-            defmt::println!(
-                "after draining: {:?}",
-                core::str::from_utf8(&self.read_buf).ok()
-            );
             match res {
                 Ok(msg) => return Some(msg),
                 Err(e) => {
@@ -143,8 +138,7 @@ where
         // FIXME: if the tty has echo on, we'll get back our writes as reads. For some reason,
         // every time the usb serial gets reopened, it defaults to echo. So for now, don't
         // actually write anything.
-        self.write_buf.clear();
-        /*
+        //self.write_buf.clear();
         let mut idx = 0;
         while idx < self.write_buf.len() {
             match self.serial.write(&self.write_buf[idx..]) {
@@ -160,7 +154,6 @@ where
             }
         }
         self.write_buf.drain(..idx);
-        */
     }
 
     /// Tries to send or queue a message. Returns the message if the queue was full.

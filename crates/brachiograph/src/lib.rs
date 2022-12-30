@@ -233,6 +233,7 @@ pub struct Point {
 
 #[derive(Debug, Format)]
 pub enum Op {
+    Cancel,
     MoveTo(Point),
     PenUp,
     PenDown,
