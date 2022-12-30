@@ -30,7 +30,7 @@ fn load_svg(path: &Path) -> anyhow::Result<Vec<BezPath>> {
         let mut bez = BezPath::new();
         if let usvg::NodeKind::Path(p) = &*node.borrow() {
             // TODO: do we need to apply the transform in p.transform or has that been done
-            // already?
+            // already? FIXME: yes, I think we do need it
             for seg in p.data.segments() {
                 match seg {
                     usvg::PathSegment::MoveTo { x, y } => bez.move_to((x, y)),
@@ -79,14 +79,16 @@ fn flatten(path: &BezPath) -> BezPath {
     if path.elements().len() <= 1 {
         return BezPath::new();
     }
-    let start = path.get_seg(1).unwrap().eval(0.0);
+    let mut start = (0., 0.).into();
     let mut ret = BezPath::new();
-    path.flatten(0.1, |el| {
-        if matches!(el, PathEl::ClosePath) {
-            ret.push(PathEl::LineTo(start));
-        } else {
-            ret.push(el)
+    path.flatten(0.05, |el| match el {
+        PathEl::LineTo(_) => ret.push(el),
+        PathEl::MoveTo(p) => {
+            start = p;
+            ret.push(el);
         }
+        PathEl::ClosePath => ret.push(PathEl::LineTo(start)),
+        _ => unreachable!(),
     });
     ret
 }
@@ -137,11 +139,12 @@ fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
             }
         }
 
+        resp.clear();
         serial.read.read_line(&mut resp)?;
         match resp.trim() {
             "ack" => break,
             "queue full" => continue,
-            resp => bail!("Unexpected response: {resp}"),
+            resp => bail!("Unexpected response: {resp:?}"),
         }
     }
 
@@ -150,7 +153,9 @@ fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let serial = serialport::new(&args.tty, 9600).open()?;
+    let serial = serialport::new(&args.tty, 9600)
+        .timeout(std::time::Duration::from_secs(60))
+        .open()?;
     let mut serial = Serial {
         read: BufReader::with_capacity(128, serial.try_clone().unwrap()),
         write: serial,
@@ -168,6 +173,7 @@ fn main() -> anyhow::Result<()> {
         println!("{:?}", op);
         send(&mut serial, op)?;
     }
+    send(&mut serial, Op::PenUp)?;
     send(&mut serial, Op::MoveTo { x: -80, y: 80 })?;
 
     Ok(())

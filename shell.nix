@@ -21,5 +21,7 @@ pkgs.mkShell {
     openocd
     gdb
     python
+    potrace
+    imagemagick
   ];
 }
