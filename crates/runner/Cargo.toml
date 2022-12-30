@@ -23,6 +23,7 @@ defmt-rtt = "0.4"
 fixed = { version = "1.21.0", default-features = false }
 fixed-macro = "1.2.0"
 fugit = { version = "0.3.6", features = ["defmt"] }
+itoa = "1.0.5"
 nb = "1.0.0"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 ringbuffer = { version = "0.11.1", default-features = false }

@@ -83,6 +83,7 @@ dependencies = [
  "fixed",
  "fixed-macro",
  "fugit",
+ "itoa",
  "nb 1.0.0",
  "panic-probe",
  "ringbuffer",
@@ -407,6 +408,12 @@ dependencies = [
  "autocfg",
  "hashbrown",
 ]
+
+[[package]]
+name = "itoa"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fad582f4b9e86b6caa621cabeb0963332d92eea04729ab12892c2533951e6440"
 
 [[package]]
 name = "konst_kernel"

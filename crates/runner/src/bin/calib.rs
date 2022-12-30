@@ -5,18 +5,13 @@ use brachiograph_runner as _;
 
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
 use usb_device::prelude::*;
-use usbd_serial::SerialPort; // global logger + panicking-behavior + memory layout
-
-type Fixed = fixed::types::I20F12;
+use usbd_serial::SerialPort;
 
 fn set_duty<const C: u8>(pwm: &mut PwmChannel<TIM3, C>, inc: i16) {
     let max = pwm.get_max_duty();
     let old = pwm.get_duty();
     let new = (old as i16 + inc) as u16;
-    defmt::println!(
-        "duty {}/1_000_000",
-        (Fixed::from_num(new) / Fixed::from_num(max) * 1_000_000).to_num::<i32>()
-    );
+    defmt::println!("duty {}/{}", new, max);
     pwm.set_duty(new);
 }
 
@@ -37,7 +32,6 @@ mod app {
     use usb_device::prelude::*;
     use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
-    // TODO: what is the SYST frequency?
     #[monotonic(binds = SysTick, default = true)]
     type Mono = Systick<100>;
 
@@ -49,14 +43,11 @@ mod app {
         pwms: Pwms,
         usb_dev: UsbDevice<'static, UsbBusType>,
         serial: SerialPort<'static, UsbBusType>,
-        shoulder: bool,
         led: stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
     }
 
     #[init]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
-        defmt::println!("Hello, world!");
-
         static mut USB_BUS: Option<usb_device::bus::UsbBusAllocator<UsbBusType>> = None;
 
         let mut flash = cx.device.FLASH.constrain();
@@ -70,7 +61,6 @@ mod app {
             .freeze(&mut flash.acr);
 
         assert!(clocks.usbclk_valid());
-        defmt::println!("hclk rate: {:?}", clocks.hclk().to_Hz());
         let mono = Systick::new(cx.core.SYST, clocks.hclk().to_Hz());
 
         let mut gpioa = cx.device.GPIOA.split();
@@ -97,9 +87,6 @@ mod app {
             .build();
 
         let led = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
-        let mut timer = cx.device.TIM1.counter_ms(&clocks);
-        timer.start(1.secs()).unwrap();
-        timer.listen(stm32f1xx_hal::timer::Event::Update);
 
         let shoulder_pin = gpioa.pa6.into_alternate_push_pull(&mut gpioa.crl);
         let elbow_pin = gpioa.pa7.into_alternate_push_pull(&mut gpioa.crl);
@@ -126,19 +113,18 @@ mod app {
                 serial,
                 led,
                 pwms,
-                shoulder: true,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(binds = USB_LP_CAN_RX0, local = [usb_dev, serial, led, shoulder, pwms])]
+    #[task(binds = USB_LP_CAN_RX0, local = [usb_dev, serial, led, pwms])]
     fn usb_rx0(cx: usb_rx0::Context) {
         let usb_dev = cx.local.usb_dev;
         let serial = cx.local.serial;
         let led = cx.local.led;
         let pwms = cx.local.pwms;
-        super::usb_read(usb_dev, serial, pwms, cx.local.shoulder, led);
+        super::usb_read(usb_dev, serial, pwms, led);
     }
 }
 
@@ -146,7 +132,6 @@ fn usb_read<B: usb_device::bus::UsbBus>(
     usb_dev: &mut UsbDevice<'static, B>,
     serial: &mut SerialPort<'static, B>,
     pwms: &mut Pwms,
-    use_shoulder: &mut bool,
     led: &mut stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
 ) {
     if !usb_dev.poll(&mut [serial]) {
@@ -159,26 +144,45 @@ fn usb_read<B: usb_device::bus::UsbBus>(
         Ok(count) if count > 0 => {
             for &ch in &buf[0..count] {
                 match ch {
-                    b's' => {
-                        *use_shoulder = true;
-                        defmt::println!("switching to shoulder");
+                    b'k' => {
+                        set_duty(&mut pwms.shoulder, 1);
                     }
-                    b'e' => {
-                        *use_shoulder = false;
-                        defmt::println!("switching to elbow");
+                    b'K' => {
+                        set_duty(&mut pwms.shoulder, 10);
                     }
-                    b'u' => {
-                        if *use_shoulder {
-                            set_duty(&mut pwms.shoulder, 10);
-                        } else {
-                            set_duty(&mut pwms.elbow, 10);
-                        }
+                    b'j' => {
+                        set_duty(&mut pwms.shoulder, -1);
+                    }
+                    b'J' => {
+                        set_duty(&mut pwms.shoulder, -10);
                     }
                     b'd' => {
-                        if *use_shoulder {
-                            set_duty(&mut pwms.shoulder, -10);
-                        } else {
-                            set_duty(&mut pwms.elbow, -10);
+                        set_duty(&mut pwms.elbow, 1);
+                    }
+                    b'D' => {
+                        set_duty(&mut pwms.elbow, 10);
+                    }
+                    b'f' => {
+                        set_duty(&mut pwms.elbow, -1);
+                    }
+                    b'F' => {
+                        set_duty(&mut pwms.elbow, -10);
+                    }
+                    b'p' => {
+                        let mut buf = itoa::Buffer::new();
+                        let sh = buf.format(pwms.shoulder.get_duty());
+                        if serial.write(sh.as_bytes()).ok() != Some(sh.len()) {
+                            defmt::println!("failed to write it all");
+                        }
+                        if serial.write(b" ").ok() != Some(1) {
+                            defmt::println!("failed to write it all");
+                        }
+                        let el = buf.format(pwms.elbow.get_duty());
+                        if serial.write(el.as_bytes()).ok() != Some(el.len()) {
+                            defmt::println!("failed to write it all");
+                        }
+                        if serial.write(b"\n").ok() != Some(1) {
+                            defmt::println!("failed to write it all");
                         }
                     }
                     _ => {}
