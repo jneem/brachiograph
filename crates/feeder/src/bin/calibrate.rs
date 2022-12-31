@@ -20,7 +20,7 @@ struct Serial {
 
 impl Serial {
     fn get_duties(&mut self) -> anyhow::Result<(u16, u16)> {
-        while self.write.write(b"c")? != 1 {}
+        while self.write.write(b"p")? != 1 {}
         self.write.flush()?;
         let mut buf = String::new();
         BufRead::read_line(&mut self.read, &mut buf)?;
@@ -45,6 +45,7 @@ fn read_num<R: std::io::Read, W: std::io::Write>(
     while let Some(key) = keys.next().transpose()? {
         match key {
             Key::Char('\n') => {
+                write!(raw, "\n")?;
                 return Ok(buf.parse().ok());
             }
             Key::Backspace => {
@@ -188,7 +189,7 @@ fn main() -> anyhow::Result<()> {
             }
             Key::Char(c) => {
                 if "dDfFjJkK".find(c).is_some() {
-                    kind.shoulder = "dDfF".find(c).is_some();
+                    kind.shoulder = "jJkK".find(c).is_some();
                     kind.increasing = "kKfF".find(c).is_some();
                     serial.write.write(&[c as u8])?;
                     serial.write.flush()?;
