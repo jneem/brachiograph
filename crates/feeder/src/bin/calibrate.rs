@@ -166,7 +166,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(deg) = deg {
                     let (sh, el) = serial.get_duties()?;
                     let duty = if kind.shoulder { sh } else { el };
-                    calib.table(kind).insert(deg, sh);
+                    calib.table(kind).insert(deg, duty);
                     write!(&mut raw, "added {} entry {} for {}°\r\n", kind, duty, deg)?;
                 }
             }

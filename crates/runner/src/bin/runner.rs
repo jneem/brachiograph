@@ -4,7 +4,6 @@
 use brachiograph_runner as _;
 
 use brachiograph::{geom, Angle, Op};
-use fixed_macro::fixed;
 use ringbuffer::{
     ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferExt, RingBufferWrite,
 };
@@ -23,120 +22,20 @@ pub struct OpQueue {
     queue: RingBuffer<Op, 64>,
 }
 
+include!("../calibration_data.rs");
+
 // TODO: invent a data format for this
 fn shoulder_config() -> brachiograph::pwm::Pwm {
-    use brachiograph::pwm::CalibrationEntry;
     brachiograph::pwm::Pwm {
-        calib: [
-            CalibrationEntry {
-                degrees: -37,
-                duty_ratio: fixed!(0.11871: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -30,
-                duty_ratio: fixed!(0.113969: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -15,
-                duty_ratio: fixed!(0.104492: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 0,
-                duty_ratio: fixed!(0.095458: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 15,
-                duty_ratio: fixed!(0.087402: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 30,
-                duty_ratio: fixed!(0.078857: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 45,
-                duty_ratio: fixed!(0.071289: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 60,
-                duty_ratio: fixed!(0.063964: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 75,
-                duty_ratio: fixed!(0.056884: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 90,
-                duty_ratio: fixed!(0.049804: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 105,
-                duty_ratio: fixed!(0.041992: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 120,
-                duty_ratio: fixed!(0.033935: U0F16),
-            },
-        ]
-        .into_iter()
-        .collect(),
+        inc: SHOULDER_INC.iter().copied().collect(),
+        dec: SHOULDER_DEC.iter().copied().collect(),
     }
 }
 
 fn elbow_config() -> brachiograph::pwm::Pwm {
-    use brachiograph::pwm::CalibrationEntry;
     brachiograph::pwm::Pwm {
-        calib: [
-            CalibrationEntry {
-                degrees: -90,
-                duty_ratio: fixed!(0.114014: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -75,
-                duty_ratio: fixed!(0.105957: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -60,
-                duty_ratio: fixed!(0.105957: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -15,
-                duty_ratio: fixed!(0.081787: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -45,
-                duty_ratio: fixed!(0.097900: U0F16),
-            },
-            CalibrationEntry {
-                degrees: -30,
-                duty_ratio: fixed!(0.089843: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 0,
-                duty_ratio: fixed!(0.073974: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 15,
-                duty_ratio: fixed!(0.065917: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 30,
-                duty_ratio: fixed!(0.058349: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 45,
-                duty_ratio: fixed!(0.051269: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 60,
-                duty_ratio: fixed!(0.043457: U0F16),
-            },
-            CalibrationEntry {
-                degrees: 75,
-                duty_ratio: fixed!(0.035400: U0F16),
-            },
-        ]
-        .into_iter()
-        .collect(),
+        inc: ELBOW_INC.iter().copied().collect(),
+        dec: ELBOW_DEC.iter().copied().collect(),
     }
 }
 

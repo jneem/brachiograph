@@ -1,6 +1,9 @@
 #![no_main]
 #![no_std]
 
+// TODO: integrate this into the main runner (so we only have one
+// image needing to be flashed).
+
 use brachiograph_runner as _;
 
 use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
@@ -144,17 +147,19 @@ fn usb_read<B: usb_device::bus::UsbBus>(
         Ok(count) if count > 0 => {
             for &ch in &buf[0..count] {
                 match ch {
+                    // k increases the *angle* of the shoulder, so it
+                    // decreases the duty.
                     b'k' => {
-                        set_duty(&mut pwms.shoulder, 1);
-                    }
-                    b'K' => {
-                        set_duty(&mut pwms.shoulder, 10);
-                    }
-                    b'j' => {
                         set_duty(&mut pwms.shoulder, -1);
                     }
-                    b'J' => {
+                    b'K' => {
                         set_duty(&mut pwms.shoulder, -10);
+                    }
+                    b'j' => {
+                        set_duty(&mut pwms.shoulder, 1);
+                    }
+                    b'J' => {
+                        set_duty(&mut pwms.shoulder, 10);
                     }
                     b'd' => {
                         set_duty(&mut pwms.elbow, -1);
