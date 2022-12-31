@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::bail;
 use clap::Parser;
-use kurbo::{Affine, BezPath, ParamCurve, PathEl, Rect, Shape};
+use kurbo::{Affine, BezPath, PathEl, Rect, Shape};
 use serialport::SerialPort;
 
 #[derive(Parser, Debug)]

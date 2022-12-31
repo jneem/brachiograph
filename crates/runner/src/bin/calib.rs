@@ -157,16 +157,16 @@ fn usb_read<B: usb_device::bus::UsbBus>(
                         set_duty(&mut pwms.shoulder, -10);
                     }
                     b'd' => {
-                        set_duty(&mut pwms.elbow, 1);
-                    }
-                    b'D' => {
-                        set_duty(&mut pwms.elbow, 10);
-                    }
-                    b'f' => {
                         set_duty(&mut pwms.elbow, -1);
                     }
-                    b'F' => {
+                    b'D' => {
                         set_duty(&mut pwms.elbow, -10);
+                    }
+                    b'f' => {
+                        set_duty(&mut pwms.elbow, 1);
+                    }
+                    b'F' => {
+                        set_duty(&mut pwms.elbow, 10);
                     }
                     b'p' => {
                         let mut buf = itoa::Buffer::new();
