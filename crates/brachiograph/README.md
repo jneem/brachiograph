@@ -7,7 +7,6 @@ A library for brachiographs.
 Our brachiograph is parameterized like this:
 
 ![A drawing of brachiograph geometry](./drawing.svg)
-<img src="./drawing.svg">
 
 The filled black circle is at the origin (and the shoulder joint), and the white circle is at the hand.
 We'll call the bit between the shoulder and the elbow the "humerus" and denote its length by $\ell_h$,
