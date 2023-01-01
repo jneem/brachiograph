@@ -12,6 +12,7 @@ const BUF_SIZE: usize = 512;
 pub trait WriteMsg {
     /// Must write at most `WRITE_SIZE` bytes to the buffer.
     fn write(&self, buf: &mut [u8]) -> usize;
+    fn error() -> Self;
 }
 
 pub trait ParseMsg: Sized {
@@ -44,6 +45,11 @@ impl WriteMsg for Status {
         };
         buf[..s.len()].copy_from_slice(s);
         s.len()
+    }
+
+    fn error() -> Self {
+        // TODO: more detailed error
+        Self::Nack
     }
 }
 
@@ -124,7 +130,7 @@ where
             match res {
                 Ok(msg) => return Some(msg),
                 Err(e) => {
-                    // TODO: send something back
+                    let _ = self.send(Tx::error());
                     defmt::println!("error: {}", e);
                 }
             }
@@ -166,6 +172,7 @@ where
             let count = msg.write(&mut buf);
             self.write_buf.try_extend_from_slice(&buf[..count]).unwrap();
             self.write_buf.push(b'\n');
+            self.write();
             Ok(())
         }
     }

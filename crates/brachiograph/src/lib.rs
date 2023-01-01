@@ -46,6 +46,7 @@ impl Movement {
 pub enum State {
     Resting(Point),
     Moving(Movement),
+    Lifting(Point, Instant),
 }
 
 impl State {
@@ -61,11 +62,18 @@ impl State {
                     movement.interpolate(now)
                 }
             }
+            State::Lifting(pos, until) => {
+                let ret = *pos;
+                if now >= *until {
+                    *self = State::Resting(ret);
+                }
+                ret
+            }
         }
     }
 
-    pub fn is_moving(&self) -> bool {
-        matches!(self, State::Moving(_))
+    pub fn is_resting(&self) -> bool {
+        matches!(self, State::Resting(_))
     }
 }
 
@@ -114,12 +122,18 @@ impl<'a> RestingBrachiograph<'a> {
         Ok(())
     }
 
-    pub fn pen_up(&mut self) {
-        self.inner.pen_down = false;
+    pub fn pen_up(&mut self, now: Instant) {
+        if self.inner.pen_down {
+            self.inner.pen_down = false;
+            self.inner.state = State::Lifting(self.inner.pos, now + Duration::millis(800));
+        }
     }
 
-    pub fn pen_down(&mut self) {
-        self.inner.pen_down = true;
+    pub fn pen_down(&mut self, now: Instant) {
+        if !self.inner.pen_down {
+            self.inner.pen_down = true;
+            self.inner.state = State::Lifting(self.inner.pos, now + Duration::millis(800));
+        }
     }
 }
 
@@ -147,24 +161,38 @@ impl Brachiograph {
         self.config.at_coord(self.pos.x, self.pos.y).unwrap()
     }
 
-    pub fn update(&mut self, now: Instant) -> geom::State {
+    pub fn update(&mut self, now: Instant) -> (geom::State, bool /* pen down */) {
         self.pos = self.state.update(now);
         // FIXME: unwrap. Should we store both position and angles?
-        self.config.at_coord(self.pos.x, self.pos.y).unwrap()
+        let state = self.config.at_coord(self.pos.x, self.pos.y).unwrap();
+        (state, self.is_pen_down(now))
+    }
+
+    pub fn is_pen_down(&self, now: Instant) -> bool {
+        match self.state {
+            State::Resting(_) | State::Moving(_) => self.pen_down,
+            State::Lifting(_, finished) => {
+                if now >= (finished - Duration::millis(400)) {
+                    self.pen_down
+                } else {
+                    !self.pen_down
+                }
+            }
+        }
     }
 
     pub fn resting(&mut self) -> Option<RestingBrachiograph<'_>> {
-        if self.state.is_moving() {
-            None
-        } else {
+        if self.state.is_resting() {
             Some(RestingBrachiograph { inner: self })
+        } else {
+            None
         }
     }
 }
 
 /// We represent angles between 0 and 180 degrees (the theoretical range of the servos)
 /// as minutes.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Angle(Fixed);
 
 impl Format for Angle {

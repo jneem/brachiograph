@@ -36,10 +36,14 @@ impl Pwm {
         }
     }
 
-    pub fn duty(&self, angle: Angle) -> Option<u16> {
+    pub fn duty(&self, last_angle: Angle, angle: Angle) -> Option<u16> {
         let deg = angle.degrees();
-        // FIXME: use dec if appropriate
-        for slice in self.inc.windows(2) {
+        let slices = if angle.degrees() > last_angle.degrees() {
+            self.inc.windows(2)
+        } else {
+            self.dec.windows(2)
+        };
+        for slice in slices {
             let before = Fixed::from_num(slice[0].0);
             let after = Fixed::from_num(slice[1].0);
             if before <= deg && deg <= after {
@@ -75,7 +79,8 @@ mod tests {
         let sh = Pwm::shoulder();
         assert_approx(
             fixed!(0.09166666: U0F16),
-            sh.duty(Angle::from_degrees(0)).unwrap(),
+            sh.duty(Angle::from_degrees(0), Angle::from_degrees(0))
+                .unwrap(),
         );
     }
 }

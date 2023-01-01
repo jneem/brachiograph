@@ -33,8 +33,14 @@ fn load_svg(path: &Path) -> anyhow::Result<Vec<BezPath>> {
             // already? FIXME: yes, I think we do need it
             for seg in p.data.segments() {
                 match seg {
-                    usvg::PathSegment::MoveTo { x, y } => bez.move_to((x, y)),
-                    usvg::PathSegment::LineTo { x, y } => bez.line_to((x, y)),
+                    usvg::PathSegment::MoveTo { x, y } => {
+                        let (x, y) = p.transform.apply(x, y);
+                        bez.move_to((x, y));
+                    }
+                    usvg::PathSegment::LineTo { x, y } => {
+                        let (x, y) = p.transform.apply(x, y);
+                        bez.line_to((x, y));
+                    }
                     usvg::PathSegment::CurveTo {
                         x1,
                         y1,
@@ -42,12 +48,19 @@ fn load_svg(path: &Path) -> anyhow::Result<Vec<BezPath>> {
                         y2,
                         x,
                         y,
-                    } => bez.curve_to((x1, y1), (x2, y2), (x, y)),
+                    } => {
+                        let (x, y) = p.transform.apply(x, y);
+                        let (x1, y1) = p.transform.apply(x1, y1);
+                        let (x2, y2) = p.transform.apply(x2, y2);
+                        bez.curve_to((x1, y1), (x2, y2), (x, y));
+                    }
                     usvg::PathSegment::ClosePath => bez.close_path(),
                 }
             }
         }
-        ret.push(bez);
+        if !bez.is_empty() {
+            ret.push(bez);
+        }
     }
     Ok(ret)
 }
@@ -125,6 +138,7 @@ fn to_ops(path: &BezPath) -> Vec<Op> {
 
 // Send a single op element to brachiograph, blocking if necessary.
 fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
+    println!("{:?}", op);
     let mut resp = String::new();
     loop {
         match op {
@@ -141,9 +155,12 @@ fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
 
         resp.clear();
         serial.read.read_line(&mut resp)?;
-        match resp.trim() {
+        match dbg!(resp.trim()) {
             "ack" => break,
-            "queue full" => continue,
+            "queue full" => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                continue;
+            }
             resp => bail!("Unexpected response: {resp:?}"),
         }
     }
@@ -170,7 +187,6 @@ fn main() -> anyhow::Result<()> {
         .flat_map(|bez| to_ops(&bez).into_iter())
         .collect();
     for op in ops {
-        println!("{:?}", op);
         send(&mut serial, op)?;
     }
     send(&mut serial, Op::PenUp)?;

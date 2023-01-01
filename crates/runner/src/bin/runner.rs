@@ -19,12 +19,11 @@ pub struct OpQueue {
     // TODO: would be sort of nice if we can make this big, but it overflows the stack. We can
     // probably shrink `Op` by a factor of 2 or more. It isn't a huge deal, though: we're unlikely
     // to process more than a handful of ops per second, so there's no need to queue up too many.
-    queue: RingBuffer<Op, 64>,
+    queue: RingBuffer<Op, 32>,
 }
 
 include!("../calibration_data.rs");
 
-// TODO: invent a data format for this
 fn shoulder_config() -> brachiograph::pwm::Pwm {
     brachiograph::pwm::Pwm {
         inc: SHOULDER_INC.iter().copied().collect(),
@@ -68,18 +67,19 @@ fn get_max_duty<const C: u8>(pwm: &PwmChannel<TIM3, C>) -> Fixed {
 fn set_angle<const C: u8>(
     pwm: &mut PwmChannel<TIM3, C>,
     cfg: &brachiograph::pwm::Pwm,
+    last_angle: Angle,
     angle: Angle,
 ) {
-    let duty_ratio = Fixed::from_num(cfg.duty(angle).unwrap()); // FIXME
-    let max = get_max_duty(pwm);
-    let duty = max * duty_ratio;
-    pwm.set_duty(duty.to_num());
+    let duty = cfg.duty(last_angle, angle).unwrap(); // FIXME: unwrap
+    pwm.set_duty(duty);
 }
 
 pub struct Pwms {
     shoulder: PwmChannel<TIM3, 0>,
     elbow: PwmChannel<TIM3, 1>,
     pen: PwmChannel<TIM3, 2>,
+    cur_shoulder: Angle,
+    cur_elbow: Angle,
     shoulder_cfg: brachiograph::pwm::Pwm,
     elbow_cfg: brachiograph::pwm::Pwm,
     pen_cfg: brachiograph::pwm::TogglePwm,
@@ -99,6 +99,8 @@ impl Pwms {
             shoulder,
             elbow,
             pen,
+            cur_shoulder: init_angles.shoulder,
+            cur_elbow: init_angles.elbow,
             shoulder_cfg,
             elbow_cfg,
             pen_cfg,
@@ -113,11 +115,18 @@ impl Pwms {
     }
 
     pub fn set_shoulder(&mut self, angle: Angle) {
-        set_angle(&mut self.shoulder, &self.shoulder_cfg, angle)
+        set_angle(
+            &mut self.shoulder,
+            &self.shoulder_cfg,
+            self.cur_shoulder,
+            angle,
+        );
+        self.cur_shoulder = angle;
     }
 
     pub fn set_elbow(&mut self, angle: Angle) {
-        set_angle(&mut self.elbow, &self.elbow_cfg, angle)
+        set_angle(&mut self.elbow, &self.elbow_cfg, self.cur_elbow, angle);
+        self.cur_elbow = angle;
     }
 
     pub fn pen_down(&mut self, down: bool) {
@@ -288,21 +297,21 @@ mod app {
             // TODO: no better way to convert instants??
             let geom_now = fugit::Instant::<u64, 1, 1_000_000>::from_ticks(0)
                 + now.duration_since_epoch().convert();
-            let geom = state.update(geom_now);
+            let (geom, pen_down) = state.update(geom_now);
+
             pwms.set_shoulder(geom.shoulder);
             pwms.set_elbow(geom.elbow);
+            pwms.pen_down(pen_down);
 
             if let Some(mut resting) = state.resting() {
                 if let Some(op) = op_queue.queue.dequeue() {
                     //defmt::println!("popped op {}", op);
                     match op {
                         Op::PenUp => {
-                            resting.pen_up();
-                            pwms.pen_down(false);
+                            resting.pen_up(geom_now);
                         }
                         Op::PenDown => {
-                            resting.pen_down();
-                            pwms.pen_down(true);
+                            resting.pen_down(geom_now);
                         }
                         Op::MoveTo(point) => {
                             // TODO: error handling

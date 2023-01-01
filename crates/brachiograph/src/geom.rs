@@ -25,10 +25,10 @@ impl Default for Config {
         Config {
             humerus: 8.to_fixed(),
             ulna: 8.to_fixed(),
-            shoulder_range: (Angle::from_degrees(-50), Angle::from_degrees(110)),
-            elbow_range: (Angle::from_degrees(-80), Angle::from_degrees(80)),
+            shoulder_range: (Angle::from_degrees(-45), Angle::from_degrees(120)),
+            elbow_range: (Angle::from_degrees(-75), Angle::from_degrees(60)),
             x_range: ((-8).to_fixed(), 8.to_fixed()),
-            y_range: (4.to_fixed(), 14.to_fixed()),
+            y_range: (5.to_fixed(), 13.to_fixed()),
         }
     }
 }
@@ -84,9 +84,9 @@ impl Config {
             return Err(());
         }
         // FIXME: double-check the sign
-        let elbow_rads = -asin(sin_elbow);
+        let elbow_rads = asin(sin_elbow);
         let elbow = Angle::from_radians(elbow_rads);
-        let shoulder_rads = Fixed::FRAC_PI_2 + Fixed::FRAC_PI_4 - theta + elbow_rads / 2;
+        let shoulder_rads = Fixed::FRAC_PI_2 + Fixed::FRAC_PI_4 - theta - elbow_rads / 2;
         let shoulder = Angle::from_radians(shoulder_rads);
 
         if self.elbow_is_valid(elbow) && self.shoulder_is_valid(shoulder) {
