@@ -70,15 +70,15 @@ impl TogglePwm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn assert_approx(a: Frac, b: Frac) {
-        assert!(a.dist(b) < 0.0001);
+    fn assert_approx(a: u16, b: u16) {
+        assert!((a as i32 - b as i32).abs() < 10);
     }
 
     #[test]
     fn precomputed_duties() {
         let sh = Pwm::shoulder();
         assert_approx(
-            fixed!(0.09166666: U0F16),
+            916,
             sh.duty(Angle::from_degrees(0), Angle::from_degrees(0))
                 .unwrap(),
         );

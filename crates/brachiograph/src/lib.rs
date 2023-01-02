@@ -144,6 +144,8 @@ impl Brachiograph {
             y: y.to_fixed(),
         };
         Brachiograph {
+            // Note that we only ever use the default config, whose validity is checked in the tests.
+            // If we ever use a non-default config, make sure to check validity at runtime.
             config: Default::default(),
             pos,
             state: State::Resting(pos),
@@ -204,6 +206,10 @@ impl Format for Angle {
 }
 
 impl Angle {
+    pub fn clamp(self, lower: Angle, upper: Angle) -> Angle {
+        Angle::from_degrees(self.degrees().clamp(lower.degrees(), upper.degrees()))
+    }
+
     pub fn from_degrees<N: ToFixed>(deg: N) -> Angle {
         // TODO: reinstante the angle-clamping
         Angle(deg.to_fixed())
@@ -222,6 +228,14 @@ impl Angle {
 
     pub fn degrees(self) -> Fixed {
         self.0
+    }
+}
+
+impl std::ops::Neg for Angle {
+    type Output = Angle;
+
+    fn neg(self) -> Self::Output {
+        Angle(-self.0)
     }
 }
 
