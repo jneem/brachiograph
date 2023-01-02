@@ -31,11 +31,15 @@ are the same length), and so $\theta_2 = \theta_3$. Therefore $\pi = \theta_1 + 
 Finally, we solve for $\phi_s$ by observing that $\tan^{-1} (y/x) + \theta_2 + \phi_s = \pi$.
 
 Eliminating the temporary $\theta$ variables and simplifying, we have
+
 $$
   \phi_e = - \sin^{-1} \left( 1 - \frac{x^2 + y^2}{2 \ell^2} \right)
 $$
+
 and
+
 $$
   \phi_s = \frac{3 \pi}{4} + \frac{\phi_e}{2} - \tan^{-1}(y/x)
 $$
+
 (note that our $\tan^{-1}$ is assumed to give values between $0$ and $\pi$).
