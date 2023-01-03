@@ -14,7 +14,7 @@ version = "0.1.0"
 
 [dependencies]
 arrayvec = { version = "0.7.2", default-features = false }
-brachiograph = { path = "../brachiograph", default-features = false }
+brachiograph = { path = "../host/brachiograph", default-features = false }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 cortex-m-rtic = "1"

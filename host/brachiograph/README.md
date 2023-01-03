@@ -1,6 +1,6 @@
 # brachiograph
 
-A library for brachiographs.
+A library for [brachiographs](https://www.brachiograph.art/).
 
 ## The geometry
 

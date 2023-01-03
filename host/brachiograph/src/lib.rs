@@ -6,11 +6,22 @@ use fixed::traits::ToFixed;
 
 pub mod geom;
 pub mod pwm;
+pub use fixed;
+pub use fugit;
 
+/// The type that we use for most of our numerical computations.
+///
+/// (Because this library is intended to be usable on embedded processors
+/// without floating point units.)
 pub type Fixed = fixed::types::I20F12;
+
+/// The duration type that we use for most of our time calculations.
 pub type Duration = fugit::Duration<u64, 1, 1_000_000>;
+
+/// The instant type that we use for most of our time calculations.
 pub type Instant = fugit::Instant<u64, 1, 1_000_000>;
 
+/// Represents a brachiograph in transition from one point to another.
 #[derive(Clone, Format)]
 pub struct Movement {
     init: Point,
@@ -20,6 +31,7 @@ pub struct Movement {
 }
 
 impl Movement {
+    /// At time `now`, where is this movement?
     pub fn interpolate(&self, now: Instant) -> Point {
         let dur = now.checked_duration_since(self.start).unwrap();
         let total_dur: Fixed = self.dur.to_millis().to_fixed();
@@ -36,20 +48,27 @@ impl Movement {
         ret
     }
 
+    /// Has the movement finished moving?
     pub fn is_finished(&self, now: Instant) -> bool {
         now >= self.start + self.dur
     }
 }
 
-// TODO: doing pen-up/pen-down state? It takes some time...
+/// The action that a brachiograph is carrying out.
 #[derive(Clone, defmt::Format)]
 pub enum State {
+    /// Resting (either pen up or pen down) at a point.
     Resting(Point),
+    /// Moving (either pen up or pen down) from one point to another.
     Moving(Movement),
+    /// Putting the pen either up or down (at a given point, and finishing at a given time).
     Lifting(Point, Instant),
 }
 
 impl State {
+    /// Update this state to the new `now`.
+    ///
+    /// Returns the current position of the hand.
     pub fn update(&mut self, now: Instant) -> Point {
         match self {
             State::Resting(pos) => *pos,
@@ -72,14 +91,17 @@ impl State {
         }
     }
 
+    /// Is the state resting?
     pub fn is_resting(&self) -> bool {
         matches!(self, State::Resting(_))
     }
 }
 
+/// The state of a brachiograph.
 #[derive(Clone)]
 pub struct Brachiograph {
     config: geom::Config,
+    // The current position.
     pos: Point,
     state: State,
     pen_down: bool,
@@ -87,6 +109,7 @@ pub struct Brachiograph {
     speed: Fixed,
 }
 
+/// A brachiograph that is resting, ready to undertake another action.
 pub struct RestingBrachiograph<'a> {
     inner: &'a mut Brachiograph,
 }
@@ -122,6 +145,9 @@ impl<'a> RestingBrachiograph<'a> {
         Ok(())
     }
 
+    /// Lift the pen to stop drawing.
+    ///
+    /// `now` is the current time.
     pub fn pen_up(&mut self, now: Instant) {
         if self.inner.pen_down {
             self.inner.pen_down = false;
@@ -129,6 +155,9 @@ impl<'a> RestingBrachiograph<'a> {
         }
     }
 
+    /// Lower the pen to start drawing.
+    ///
+    /// `now` is the current time.
     pub fn pen_down(&mut self, now: Instant) {
         if !self.inner.pen_down {
             self.inner.pen_down = true;
@@ -231,7 +260,7 @@ impl Angle {
     }
 }
 
-impl std::ops::Neg for Angle {
+impl core::ops::Neg for Angle {
     type Output = Angle;
 
     fn neg(self) -> Self::Output {
