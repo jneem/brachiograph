@@ -3,9 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
+use brachiograph::Angle;
 use clap::Parser;
-use kurbo::{Affine, BezPath, PathEl, Rect, Shape};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use serialport::SerialPort;
 
 #[derive(Parser, Debug)]
@@ -106,6 +107,60 @@ fn flatten(path: &BezPath) -> BezPath {
     ret
 }
 
+fn load_logo(path: &Path) -> anyhow::Result<Vec<brachiologo::BuiltIn>> {
+    let data = std::fs::read_to_string(path)?;
+    let program = brachiologo::program(&data)
+        .map_err(|e| anyhow!("parse error: {e}"))?
+        .1;
+    let mut scope = brachiologo::Scope::default();
+    let mut output = Vec::new();
+    scope.exec_block(&mut output, &program)?;
+    Ok(output)
+}
+
+fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<Op> {
+    let mut pos = rect.center();
+    let mut angle = Angle::from_degrees(90);
+    let mut ret = Vec::new();
+
+    let clamp = |pt: Point| {
+        (
+            pt.x.clamp(rect.min_x(), rect.max_x()).round() as i32,
+            pt.y.clamp(rect.min_y(), rect.max_y()).round() as i32,
+        )
+    };
+
+    for step in steps {
+        match step {
+            brachiologo::BuiltIn::Forward(dist) => {
+                pos += Vec2::from_angle(angle.radians().to_num()) * *dist;
+                let (x, y) = clamp(pos);
+                ret.push(Op::MoveTo { x, y });
+            }
+            brachiologo::BuiltIn::Back(dist) => {
+                pos -= Vec2::from_angle(angle.radians().to_num()) * *dist;
+                let (x, y) = clamp(pos);
+                ret.push(Op::MoveTo { x, y });
+            }
+            brachiologo::BuiltIn::Left(ang) => {
+                angle += Angle::from_degrees(*ang);
+            }
+            brachiologo::BuiltIn::Right(ang) => {
+                angle += Angle::from_degrees(*ang);
+            }
+            brachiologo::BuiltIn::ClearScreen => {}
+            brachiologo::BuiltIn::PenUp => {
+                ret.push(Op::PenUp);
+            }
+            brachiologo::BuiltIn::PenDown => {
+                ret.push(Op::PenDown);
+            }
+        }
+    }
+
+    ret
+}
+
 #[derive(Debug)]
 enum Op {
     PenUp,
@@ -178,14 +233,24 @@ fn main() -> anyhow::Result<()> {
         write: serial,
     };
 
-    let mut paths = load_svg(&args.input)?;
-    // TODO: make the rect configurable
-    transform(&mut paths, Rect::new(-8.0, 5.0, 8.0, 13.0));
-    let ops: Vec<_> = paths
-        .iter()
-        .map(flatten)
-        .flat_map(|bez| to_ops(&bez).into_iter())
-        .collect();
+    let ext = args.input.extension().and_then(|s| s.to_str());
+    let ops = if ext == Some("svg") {
+        let mut paths = load_svg(&args.input)?;
+        // TODO: make the rect configurable
+        transform(&mut paths, Rect::new(-8.0, 5.0, 8.0, 13.0));
+        paths
+            .iter()
+            .map(flatten)
+            .flat_map(|bez| to_ops(&bez).into_iter())
+            .collect()
+    } else if ext == Some("logo") {
+        let turtle = load_logo(&args.input)?;
+        send(&mut serial, Op::MoveTo { x: 0, y: 90 })?;
+        send(&mut serial, Op::PenDown)?;
+        run_turtle(&turtle, Rect::new(-80.0, 50.0, 80.0, 130.0))
+    } else {
+        bail!("didn't recognize input file type");
+    };
     for op in ops {
         send(&mut serial, op)?;
     }

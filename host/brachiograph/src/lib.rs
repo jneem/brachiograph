@@ -258,6 +258,10 @@ impl Angle {
     pub fn degrees(self) -> Fixed {
         self.0
     }
+
+    pub fn radians(self) -> Fixed {
+        self.degrees() * Fixed::PI / 180
+    }
 }
 
 impl core::ops::Neg for Angle {
@@ -265,6 +269,20 @@ impl core::ops::Neg for Angle {
 
     fn neg(self) -> Self::Output {
         Angle(-self.0)
+    }
+}
+
+impl core::ops::Add<Angle> for Angle {
+    type Output = Angle;
+
+    fn add(self, rhs: Angle) -> Self::Output {
+        Angle::from_degrees(self.degrees() + rhs.degrees())
+    }
+}
+
+impl core::ops::AddAssign<Angle> for Angle {
+    fn add_assign(&mut self, rhs: Angle) {
+        self.0 += rhs.degrees()
     }
 }
 

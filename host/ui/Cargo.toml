@@ -1,18 +1,17 @@
 [package]
-name = "feeder"
+name = "ui"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.68"
+anyhow = { version = "1.0.68", features = ["backtrace"] }
 brachiograph = { version = "0.1.0", path = "../brachiograph" }
-brachiologo = { path = "/home/jneeman/programming/brachiologo" }
-clap = { version = "4.0.32", features = ["derive"] }
-crossterm = "0.25.0"
-fontdb = "0.11.1"
+brachiologo = "0.1.1"
+dioxus = "0.3.1"
+dioxus-desktop = "0.3.0"
 kurbo = "0.9.0"
+log = "0.4.17"
+pretty_env_logger = "0.4.0"
 serialport = "4.2.0"
-termion = "2.0.1"
-usvg = "0.28.0"

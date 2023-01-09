@@ -6,28 +6,26 @@ let
     extensions = [ "llvm-tools-preview" ];
     targets = [ "thumbv7m-none-eabi" ];
   };
-  python = pkgs.python3.withPackages (p: [ p.pyserial ]);
-
-  dioxusCli = import ./dioxus-cli.nix;
 in
-pkgs.mkShell {
+
+pkgs.rustPlatform.buildRustPackage rec {
+  pname = "dioxus-cli";
+  version = "0.3";
+  src = builtins.fetchGit {
+    url = https://github.com/DioxusLabs/cli;
+    rev = "93c765131238934f4ee421fbff9552a365f1ec84";
+  };
+  cargoHash = "sha256-StpmgC9p6xLAZhs1BHvU5L31y1d9n4uXbxanY8ItVQ0=";
+
   nativeBuildInputs = with pkgs; [
     pkg-config
-    udev
+    openssl
     rust-toolchain
-    rust-analyzer
-    flip-link
-    probe-run
-    cargo-generate
-    cargo-binutils
-    openocd
-    gdb
-    python
-    potrace
-    imagemagick
-    webkitgtk
-    gtk3
-    libayatana-appindicator
-    dioxusCli
   ];
+
+  buildInputs = with pkgs; [
+    openssl
+  ];
+
+  doCheck = false;
 }
