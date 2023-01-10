@@ -1,0 +1,33 @@
+name: Build UI
+
+on: [workflow_dispatch]
+
+jobs:
+  deploy:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2019, ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            command: |
+                sudo apt-get update && sudo apt install libwebkit2gtk-4.0-dev libgtk3-dev libayatana-appindicator3-dev libsoup2.4-dev
+                cd host/ui
+                cargo build --verbose --release
+            binary: host/target/release/ui
+          - os: windows-2019
+            command: |
+                cd host\ui
+                cargo build --verbose --release
+            binary: host\target\release\ui.exe
+
+        steps:
+          - name: Release build
+            uses: actions/checkout@v2
+          - run: |
+              ${{ matrix.command }}
+          - name: Archive release build
+            uses: actions/upload-artifact@v2
+            with:
+              name: dist
+              path: ${{ matrix.binary }}
