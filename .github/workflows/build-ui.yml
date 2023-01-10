@@ -21,13 +21,13 @@ jobs:
                 cargo build --verbose --release
             binary: host\target\release\ui.exe
 
-        steps:
-          - name: Release build
-            uses: actions/checkout@v2
-          - run: |
-              ${{ matrix.command }}
-          - name: Archive release build
-            uses: actions/upload-artifact@v2
-            with:
-              name: dist
-              path: ${{ matrix.binary }}
+    steps:
+      - name: Release build
+        uses: actions/checkout@v2
+      - run: |
+          ${{ matrix.command }}
+      - name: Archive release build
+        uses: actions/upload-artifact@v2
+        with:
+          name: dist
+          path: ${{ matrix.binary }}
