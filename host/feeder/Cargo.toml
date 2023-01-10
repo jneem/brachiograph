@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.68"
 brachiograph = { version = "0.1.0", path = "../brachiograph" }
-brachiologo = { path = "/home/jneeman/programming/brachiologo" }
+brachiologo = { version = "0.1.1" }
 clap = { version = "4.0.32", features = ["derive"] }
 crossterm = "0.25.0"
 fontdb = "0.11.1"
