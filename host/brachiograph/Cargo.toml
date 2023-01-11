@@ -18,4 +18,3 @@ fugit = { version = "0.3.6" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 defmt = "0.3.2"
-fugit = { version = "0.3.6", features = ["defmt"] }
