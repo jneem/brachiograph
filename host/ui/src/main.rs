@@ -3,6 +3,8 @@
 // TODO: feedback and error messages
 // TODO: quit menu
 
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use std::{
     cell::RefCell,
     io::{BufRead, BufReader},
