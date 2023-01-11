@@ -12,7 +12,10 @@ std = []
 [dependencies]
 arrayvec = { version = "0.7.2", default-features = false }
 cordic = "0.1.5"
-defmt = "0.3.2"
 fixed = { version = "1.21.0", default-features = false }
 fixed-macro = "1.2.0"
+fugit = { version = "0.3.6" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+defmt = "0.3.2"
 fugit = { version = "0.3.6", features = ["defmt"] }

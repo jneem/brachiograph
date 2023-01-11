@@ -1,7 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use core::str::FromStr;
-use defmt::Format;
 use fixed::traits::ToFixed;
 
 pub mod geom;
@@ -22,7 +21,8 @@ pub type Duration = fugit::Duration<u64, 1, 1_000_000>;
 pub type Instant = fugit::Instant<u64, 1, 1_000_000>;
 
 /// Represents a brachiograph in transition from one point to another.
-#[derive(Clone, Format)]
+#[derive(Clone)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct Movement {
     init: Point,
     target: Point,
@@ -55,7 +55,8 @@ impl Movement {
 }
 
 /// The action that a brachiograph is carrying out.
-#[derive(Clone, defmt::Format)]
+#[derive(Clone)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum State {
     /// Resting (either pen up or pen down) at a point.
     Resting(Point),
@@ -220,7 +221,7 @@ impl Brachiograph {
 pub struct Angle(Fixed);
 
 #[cfg(target_os = "none")]
-impl Format for Angle {
+impl defmt::Format for Angle {
     fn format(&self, f: defmt::Formatter) {
         let degs: i32 = self.0.to_num();
         let mins: i32 = (self.0.frac() * 60).to_num();
@@ -281,7 +282,8 @@ impl core::ops::AddAssign<Angle> for Angle {
 }
 
 /// Represented as milliseconds, between 0 and 1000.
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct Delay(u16);
 
 impl Delay {
@@ -301,21 +303,23 @@ impl From<core::time::Duration> for Delay {
 }
 
 #[derive(Debug)]
-#[cfg_attr(target_os = "none", derive(Format))]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct Angles {
     pub shoulder: Angle,
     pub elbow: Angle,
 }
 
-#[derive(Copy, Clone, Debug, Format)]
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct Point {
-    #[defmt(Display2Format)]
+    #[cfg_attr(target_os = "none", defmt(Display2Format))]
     pub x: Fixed,
-    #[defmt(Display2Format)]
+    #[cfg_attr(target_os = "none", defmt(Display2Format))]
     pub y: Fixed,
 }
 
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum Op {
     Cancel,
     MoveTo(Point),
@@ -323,7 +327,8 @@ pub enum Op {
     PenDown,
 }
 
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum OpParseErr {
     UnknownOp,
     BadAngles,
@@ -360,7 +365,7 @@ impl FromStr for Op {
 }
 
 #[derive(Debug)]
-#[cfg_attr(target_os = "none", derive(Format))]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum Resp {
     Angles(Angles),
     Busy,
