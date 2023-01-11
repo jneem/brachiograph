@@ -27,11 +27,11 @@ jobs:
 
     steps:
       - name: Release build
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - run: |
           ${{ matrix.command }}
       - name: Archive release build
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: dist
           path: ${{ matrix.binary }}
