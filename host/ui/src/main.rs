@@ -1,7 +1,6 @@
 // TODO: factor out code that's duplicated from feeder
 // TODO: save/load
 // TODO: feedback and error messages
-// TODO: quit menu
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
@@ -14,7 +13,10 @@ use std::{
 use anyhow::{anyhow, bail};
 use brachiograph::Angle;
 use dioxus::prelude::*;
-use dioxus_desktop::Config;
+use dioxus_desktop::{
+    tao::menu::{MenuBar, MenuItem},
+    Config, WindowBuilder,
+};
 use kurbo::{Point, Rect, Vec2};
 use serialport::{SerialPort, SerialPortType};
 
@@ -183,8 +185,19 @@ fn interpret(code: &str) -> anyhow::Result<Vec<Op>> {
 
 fn main() {
     let state = State::default();
+    let mut file_menu = MenuBar::new();
+    file_menu.add_native_item(MenuItem::Quit);
+    let mut menu = MenuBar::new();
+    menu.add_submenu("File", true, file_menu);
+    let config = Config::new().with_window(
+        WindowBuilder::new()
+            .with_title("Brachiologo")
+            .with_decorations(true)
+            .with_closable(true)
+            .with_menu(menu),
+    );
 
-    dioxus_desktop::launch_with_props(app, state, Config::default());
+    dioxus_desktop::launch_with_props(app, state, config);
 }
 
 fn app(cx: Scope<State>) -> Element {
