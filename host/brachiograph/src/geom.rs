@@ -29,7 +29,8 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Copy, Clone, defmt::Format)]
+#[derive(Debug, Copy, Clone)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct State {
     pub shoulder: Angle,
     pub elbow: Angle,

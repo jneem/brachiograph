@@ -134,13 +134,6 @@ impl<'a> RestingBrachiograph<'a> {
             start: now,
             dur: Duration::millis((seconds * 1000).to_num()),
         };
-        /*
-        defmt::println!(
-            "interpolating dist {} units in {} ms",
-            dist.to_num::<i32>(),
-            (seconds * 1000).to_num::<i32>()
-        );
-        */
         self.inner.state = State::Moving(mov);
         Ok(())
     }
@@ -226,6 +219,7 @@ impl Brachiograph {
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Angle(Fixed);
 
+#[cfg(target_os = "none")]
 impl Format for Angle {
     fn format(&self, f: defmt::Formatter) {
         let degs: i32 = self.0.to_num();
@@ -306,7 +300,8 @@ impl From<core::time::Duration> for Delay {
     }
 }
 
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(target_os = "none", derive(Format))]
 pub struct Angles {
     pub shoulder: Angle,
     pub elbow: Angle,
@@ -364,7 +359,8 @@ impl FromStr for Op {
     }
 }
 
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(target_os = "none", derive(Format))]
 pub enum Resp {
     Angles(Angles),
     Busy,
