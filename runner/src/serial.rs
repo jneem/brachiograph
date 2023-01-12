@@ -165,12 +165,13 @@ where
     /// Tries to send or queue a message. Returns the message if the queue was full.
     pub fn send(&mut self, msg: Tx) -> Result<(), Tx> {
         self.write();
-        if self.write_buf.len() + WRITE_SIZE >= self.write_buf.capacity() {
+        if self.write_buf.len() + WRITE_SIZE + 2 > self.write_buf.capacity() {
             Err(msg)
         } else {
             let mut buf = [0u8; WRITE_SIZE];
             let count = msg.write(&mut buf);
             self.write_buf.try_extend_from_slice(&buf[..count]).unwrap();
+            self.write_buf.push(b'\r');
             self.write_buf.push(b'\n');
             self.write();
             Ok(())
