@@ -32,7 +32,7 @@ fn detect_port() -> Option<Box<dyn SerialPort>> {
 
         if usb_info.vid == VENDOR_ID && usb_info.pid == PRODUCT_ID {
             match serialport::new(&port.port_name, 9600)
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(std::time::Duration::from_secs(1))
                 .open()
             {
                 Ok(port) => {
@@ -96,9 +96,15 @@ struct Inner {
 impl Default for Inner {
     fn default() -> Inner {
         let serial = detect_port();
-        let serial = serial.map(|s| Serial {
-            read: BufReader::with_capacity(128, s.try_clone().unwrap()),
-            write: s,
+        let serial = serial.map(|s| {
+            log::info!(
+                "opened serial port with flow control {:?}",
+                s.flow_control()
+            );
+            Serial {
+                read: BufReader::with_capacity(128, s.try_clone().unwrap()),
+                write: s,
+            }
         });
         Inner { port: serial }
     }
