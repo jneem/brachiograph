@@ -2,7 +2,7 @@
 // TODO: save/load
 // TODO: feedback and error messages
 
-#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+//#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use std::{
     cell::RefCell,
@@ -57,7 +57,7 @@ struct Serial {
 
 // Send a single op element to brachiograph, blocking if necessary.
 fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
-    println!("{:?}", op);
+    log::info!("{:?}", op);
     let mut resp = String::new();
     loop {
         match op {
@@ -73,8 +73,10 @@ fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
         }
 
         resp.clear();
+        log::info!("reading");
         serial.read.read_line(&mut resp)?;
-        match dbg!(resp.trim()) {
+        log::info!("read {resp:?}");
+        match resp.trim() {
             "ack" => break,
             "queue full" => {
                 std::thread::sleep(std::time::Duration::from_millis(500));
@@ -184,6 +186,8 @@ fn interpret(code: &str) -> anyhow::Result<Vec<Op>> {
 }
 
 fn main() {
+    pretty_env_logger::init();
+
     let state = State::default();
     let mut file_menu = MenuBar::new();
     file_menu.add_native_item(MenuItem::Quit);

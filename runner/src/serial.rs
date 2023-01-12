@@ -101,6 +101,7 @@ where
         loop {
             match self.serial.read(&mut buf) {
                 Ok(count) => {
+                    defmt::println!("read '{:?}'", buf[0..count]);
                     // unwrap is ok because we checked capacity
                     self.read_buf.try_extend_from_slice(&buf[..count]).unwrap();
                     if count < READ_SIZE || self.read_buf.len() > BUF_SIZE - READ_SIZE {
@@ -150,6 +151,7 @@ where
             match self.serial.write(&self.write_buf[idx..]) {
                 Ok(0) | Err(UsbError::WouldBlock) => break,
                 Ok(count) => {
+                    defmt::println!("wrote '{:?}'", self.write_buf[idx..(idx + count)]);
                     idx += count;
                 }
                 Err(e) => {
@@ -159,6 +161,7 @@ where
                 }
             }
         }
+        let _ = self.serial.flush();
         self.write_buf.drain(..idx);
     }
 
