@@ -16,14 +16,14 @@ jobs:
           - os: ubuntu-latest
             command: |
                 sudo apt-get update && sudo apt install libwebkit2gtk-4.0-dev libgtk-3-dev libayatana-appindicator3-dev libsoup2.4-dev libudev-dev
-                cd host/ui
+                cd crates/ui
                 cargo build --verbose --release
-            binary: host/target/release/ui
+            binary: crates/target/release/ui
           - os: windows-2019
             command: |
-                cd host\ui
+                cd crates\ui
                 cargo build --verbose --release
-            binary: host\target\release\ui.exe
+            binary: crates\target\release\ui.exe
 
     steps:
       - name: Release build

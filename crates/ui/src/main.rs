@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::{anyhow, bail};
 use brachiograph::Angle;
+use brachiologo::Program;
 use dioxus::prelude::*;
 use dioxus_desktop::{
     tao::menu::{MenuBar, MenuItem},
@@ -160,13 +161,9 @@ enum Op {
     MoveTo { x: i32, y: i32 },
 }
 
-fn interpret(code: &str) -> anyhow::Result<Vec<Op>> {
-    let program = brachiologo::program(code)
-        .map_err(|e| anyhow!("parse error: {e}"))?
-        .1;
-    let mut scope = brachiologo::Scope::default();
-    let mut steps = Vec::new();
-    scope.exec_block(&mut steps, &program)?;
+fn interpret<'input>(code: &'input str) -> anyhow::Result<Vec<Op>> {
+    let program: Program<'input> = Program::parse(code).map_err(|e| anyhow!("parse error: {e}"))?;
+    let steps = program.exec().map_err(|e| anyhow!("interp error: {e}"))?;
 
     let rect = Rect::new(-80., 50., 80., 130.);
     let mut pos = rect.center();

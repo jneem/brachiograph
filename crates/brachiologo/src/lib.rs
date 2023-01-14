@@ -485,12 +485,12 @@ pub struct Program<'a> {
 }
 
 impl<'a> Program<'a> {
-    pub fn parse(s: &str) -> Result<Program, nom::Err<nom::error::Error<Span>>> {
+    pub fn parse(s: &'a str) -> Result<Program<'a>, nom::Err<nom::error::Error<Span<'a>>>> {
         let (_, code) = program(s)?;
         Ok(Program { code })
     }
 
-    pub fn exec(&'a self) -> Result<Vec<BuiltIn>, Error<'a>> {
+    pub fn exec(&self) -> Result<Vec<BuiltIn>, Error<'a>> {
         let mut scope = Scope::default();
         let mut builtins = Vec::new();
         scope.exec_block(&mut builtins, &self.code)?;
