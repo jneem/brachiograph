@@ -29,10 +29,14 @@ fn detect_port() -> Option<Box<dyn SerialPort>> {
         let SerialPortType::UsbPort(usb_info) = port.port_type else {
             continue;
         };
+        log::debug!("found usbserial port {usb_info:?}");
 
         if usb_info.vid == VENDOR_ID && usb_info.pid == PRODUCT_ID {
             match serialport::new(&port.port_name, 9600)
-                .timeout(std::time::Duration::from_secs(1))
+                // I'm not completely sure what the implications of this timeout value are,
+                // but on linux read_line returns immediately, while on windows it doesn't
+                // return until the timeout is up. So keep the timeout small.
+                .timeout(std::time::Duration::from_millis(50))
                 .open()
             {
                 Ok(port) => {
@@ -57,7 +61,7 @@ struct Serial {
 
 // Send a single op element to brachiograph, blocking if necessary.
 fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
-    log::info!("{:?}", op);
+    log::debug!("{:?}", op);
     let mut resp = String::new();
     loop {
         match op {
@@ -73,9 +77,8 @@ fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
         }
 
         resp.clear();
-        log::info!("reading");
         serial.read.read_line(&mut resp)?;
-        log::info!("read {resp:?}");
+        log::debug!("read {resp:?}");
         match resp.trim() {
             "ack" => break,
             "queue full" => {
@@ -116,7 +119,7 @@ struct State {
 }
 
 impl State {
-    fn exec(&self, code: &str) -> anyhow::Result<()> {
+    fn do_exec(&self, code: &str) -> anyhow::Result<()> {
         let ops = interpret(code)?;
         let mut serial = self.inner.borrow_mut();
         if let Some(serial) = &mut serial.port {
@@ -130,6 +133,23 @@ impl State {
         }
 
         Ok(())
+    }
+
+    fn exec(&self, code: &str) -> anyhow::Result<()> {
+        if let Err(e) = self.do_exec(code) {
+            self.inner.borrow_mut().port = None;
+            Err(e)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn has_brachiograph(&self) -> bool {
+        self.inner.borrow().port.is_some()
+    }
+
+    fn try_connect(&self) {
+        *self.inner.borrow_mut() = Inner::default();
     }
 }
 
@@ -212,37 +232,63 @@ fn main() {
 
 fn app(cx: Scope<State>) -> Element {
     let text = use_state(&cx, || String::from(""));
-    let name = cx
-        .props
-        .inner
-        .borrow()
-        .port
-        .as_ref()
-        .and_then(|p| p.write.name());
-    let port_msg = if let Some(name) = name {
-        format!("Brachiograph on port {}", name)
+    let has_brachiograph = cx.props.has_brachiograph();
+    let button_text = if has_brachiograph {
+        "Run!"
     } else {
-        String::from("No brachiograph detected")
+        "Connect..."
+    };
+    let status = if has_brachiograph {
+        String::from("")
+    } else {
+        String::from("(No brachiograph found)")
+    };
+
+    let flash = use_state(&cx, || true);
+    let spn = if *flash.get() {
+        rsx!(span {
+            class: "bold-flash1",
+            status
+        })
+    } else {
+        rsx!(span {
+            class: "bold-flash2",
+            status
+        })
     };
 
     cx.render(rsx! (
-        h3 { port_msg }
+        style { include_str!("./style.css") }
         textarea {
             rows: 20,
             cols: 80,
             value: "{text}",
+            spellcheck: false,
+            autocomplete: false,
             oninput: move |ev| text.set(ev.value.clone()),
         }
         div {
             button {
                 onclick: move |_| {
-                    println!("click {:?}", text.get());
-                    if let Err(e) = cx.props.exec(&text.get()) {
-                        log::error!("error {e}");
+                    if has_brachiograph {
+                        if let Err(e) = cx.props.exec(&text.get()) {
+                            log::error!("error {e}");
+                            flash.set(!*flash.get());
+                        }
+                    } else {
+                        cx.props.try_connect();
+                        cx.needs_update();
+                        if !cx.props.has_brachiograph() {
+                            flash.set(!*flash.get());
+                        }
+
+                        cx.needs_update();
                     }
                 },
-                "Run!"
+                button_text
             }
+
+            spn
         }
     ))
 }
