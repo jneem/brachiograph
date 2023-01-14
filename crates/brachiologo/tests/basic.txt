@@ -1,0 +1,23 @@
+fd 10
+------------
+forward 10
+============
+
+ fd 10
+------------
+forward 10
+============
+repeat 4 [ fd 10 ]
+------------
+fd 10 fd 10 fd 10 fd 10
+============
+to square :n
+	repeat 4 [
+		fd :n
+		right 90
+	]
+end
+square 10
+------------
+fd 10 right 90 fd 10 right 90 fd 10 right 90 fd 10 right 90
+============

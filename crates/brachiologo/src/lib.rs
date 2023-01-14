@@ -134,9 +134,24 @@ impl ProcedureCall {
             }
         };
 
+        let two_args = || {
+            if values.len() != 2 {
+                Err(Error::WrongParams {
+                    expected: 2,
+                    found: values.len() as u32,
+                })
+            } else {
+                Ok((values[0], values[1]))
+            }
+        };
+
         Ok(match self.name.0.as_str() {
+            "arc" => {
+                let (degrees, radius) = two_args()?;
+                BuiltIn::Arc { degrees, radius }
+            }
             "fd" | "forward" => BuiltIn::Forward(one_arg()?),
-            "bk" | "backward" => BuiltIn::Back(one_arg()?),
+            "bk" | "back" | "backward" => BuiltIn::Back(one_arg()?),
             "lt" | "left" => BuiltIn::Left(one_arg()?),
             "rt" | "right" => BuiltIn::Right(one_arg()?),
             "cs" | "clearscreen" => {
@@ -162,6 +177,7 @@ pub enum BuiltIn {
     Back(f64),
     Left(f64),
     Right(f64),
+    Arc { degrees: f64, radius: f64 },
     ClearScreen,
     PenUp,
     PenDown,
@@ -396,8 +412,8 @@ pub fn statement(input: &str) -> IResult<&str, Statement> {
         Statement::Repeat(n, b)
     });
     alt((
-        if_statement,
-        repeat_statement,
+        ws(if_statement),
+        ws(repeat_statement),
         map(procedure_def, |pd| Statement::Def(pd)),
         map(procedure_call, |pc| Statement::Call(pc)),
     ))(input)

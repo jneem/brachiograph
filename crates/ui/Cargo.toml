@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0.68", features = ["backtrace"] }
-brachiograph = { version = "0.1.0", path = "../brachiograph" }
-brachiologo = "0.1.1"
+brachiograph = { path = "../brachiograph" }
+brachiologo = { path = "../brachiologo" }
 dioxus = "0.3.1"
 dioxus-desktop = "0.3.0"
 kurbo = "0.9.0"
