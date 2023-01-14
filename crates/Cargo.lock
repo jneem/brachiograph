@@ -235,6 +235,14 @@ dependencies = [
 [[package]]
 name = "brachiologo"
 version = "0.1.1"
+dependencies = [
+ "nom",
+ "thiserror",
+]
+
+[[package]]
+name = "brachiologo"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "651f4fbe08992321792778ffffc4aa424c5c9764b136fe562841eb41d7329147"
 dependencies = [
@@ -953,7 +961,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "brachiograph",
- "brachiologo",
+ "brachiologo 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
  "crossterm",
  "fontdb",
@@ -3098,7 +3106,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "brachiograph",
- "brachiologo",
+ "brachiologo 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "dioxus",
  "dioxus-desktop",
  "kurbo 0.9.0",

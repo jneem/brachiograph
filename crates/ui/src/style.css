@@ -1,0 +1,17 @@
+@keyframes flash {
+  0%   {color:black;}
+  50%  {color:red;}
+  100% {color:black;}
+}
+
+.bold-flash1 {
+  font-weight: bold;
+  animation-name: flash;
+  animation-duration: 500ms;
+}
+
+.bold-flash2 {
+  font-weight: bold;
+  animation-name: flash;
+  animation-duration: 500ms;
+}

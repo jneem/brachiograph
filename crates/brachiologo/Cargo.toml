@@ -1,0 +1,13 @@
+[package]
+name = "brachiologo"
+version = "0.1.1"
+authors = ["Joe Neeman <joeneeman@gmail.com>"]
+edition = "2021"
+description = "Parser and evaluator for the LOGO language"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jneem/brachiograph"
+
+[dependencies]
+nom = "7.1.2"
+thiserror = "1.0.38"

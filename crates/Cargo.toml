@@ -2,6 +2,7 @@
 
 members = [
   "brachiograph",
+  "brachiologo",
   "calibrate",
   "feeder",
   "ui",
