@@ -10,4 +10,5 @@ repository = "https://github.com/jneem/brachiograph"
 
 [dependencies]
 nom = "7.1.2"
+nom_locate = "4.0.0"
 thiserror = "1.0.38"

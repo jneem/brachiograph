@@ -13,6 +13,8 @@ use nom::{
     IResult, Parser,
 };
 
+type Span<'a> = nom_locate::LocatedSpan<&'a str>;
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Literal(f64);
 
@@ -312,40 +314,40 @@ impl<'a> Scope<'a> {
 
 const RESERVED: &'static [&'static str] = &["if", "repeat", "to", "end"];
 
-fn ws<'a, F: 'a, O>(inner: F) -> impl FnMut(&'a str) -> IResult<&'a str, O>
+fn ws<'a, F: 'a, O>(inner: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O>
 where
-    F: FnMut(&'a str) -> IResult<&'a str, O>,
+    F: FnMut(Span<'a>) -> IResult<Span<'a>, O>,
 {
     delimited(multispace0, inner, multispace0)
 }
 
-pub fn ident(input: &str) -> IResult<&str, Ident> {
+pub fn ident(input: Span) -> IResult<Span, Ident> {
     verify(
-        map(ws(alpha1), |s: &str| Ident(s.to_owned())),
+        map(ws(alpha1), |s: Span| Ident(s.to_string())),
         |i: &Ident| !RESERVED.contains(&i.0.as_str()),
     )(input)
 }
 
-pub fn param(input: &str) -> IResult<&str, Ident> {
+pub fn param(input: Span) -> IResult<Span, Ident> {
     ws(preceded(char(':'), ident))(input)
 }
 
-pub fn literal(input: &str) -> IResult<&str, Literal> {
+pub fn literal(input: Span) -> IResult<Span, Literal> {
     map(ws(double), |x| Literal(x))(input)
 }
 
-pub fn op<'a, O: Copy + 'a>(ch: char, op: O) -> impl FnMut(&'a str) -> IResult<&'a str, O> {
+pub fn op<'a, O: Copy + 'a>(ch: char, op: O) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O> {
     ws(map(char(ch), move |_| op))
 }
 
-pub fn atom(input: &str) -> IResult<&str, NumExpr> {
+pub fn atom(input: Span) -> IResult<Span, NumExpr> {
     let paren = delimited(char('('), num_expr, char(')'));
     let lit = map(literal, |lit| NumExpr::Lit(lit));
     let param = map(param, |p| NumExpr::Param(p));
     alt((paren, lit, param))(input)
 }
 
-pub fn term(input: &str) -> IResult<&str, NumExpr> {
+pub fn term(input: Span) -> IResult<Span, NumExpr> {
     let mul = op('*', Op::Mul);
     let div = op('/', Op::Div);
     let (input, init) = atom.parse(input)?;
@@ -357,7 +359,7 @@ pub fn term(input: &str) -> IResult<&str, NumExpr> {
     )(input)
 }
 
-pub fn num_expr(input: &str) -> IResult<&str, NumExpr> {
+pub fn num_expr(input: Span) -> IResult<Span, NumExpr> {
     let add = op('+', Op::Add);
     let sub = op('-', Op::Sub);
     let (input, init) = term.parse(input)?;
@@ -369,14 +371,14 @@ pub fn num_expr(input: &str) -> IResult<&str, NumExpr> {
     )(input)
 }
 
-pub fn bool_expr(input: &str) -> IResult<&str, BoolExpr> {
+pub fn bool_expr(input: Span) -> IResult<Span, BoolExpr> {
     let cmp = alt((op('=', Cmp::Eq), op('<', Cmp::Lt), op('>', Cmp::Gt)));
     map(tuple((num_expr, cmp, num_expr)), |(a, cmp, b)| {
         BoolExpr(a, cmp, b)
     })(input)
 }
 
-pub fn procedure_def(input: &str) -> IResult<&str, ProcedureDef> {
+pub fn procedure_def(input: Span) -> IResult<Span, ProcedureDef> {
     map(
         delimited(
             tag("to"),
@@ -391,20 +393,20 @@ pub fn procedure_def(input: &str) -> IResult<&str, ProcedureDef> {
     )(input)
 }
 
-pub fn procedure_call(input: &str) -> IResult<&str, ProcedureCall> {
+pub fn procedure_call(input: Span) -> IResult<Span, ProcedureCall> {
     map(tuple((ident, many0(num_expr))), |(name, params)| {
         ProcedureCall { name, params }
     })(input)
 }
 
-pub fn block(input: &str) -> IResult<&str, Block> {
+pub fn block(input: Span) -> IResult<Span, Block> {
     map(
         delimited(char('['), many0(statement), char(']')),
         |statements| Block { statements },
     )(input)
 }
 
-pub fn statement(input: &str) -> IResult<&str, Statement> {
+pub fn statement(input: Span) -> IResult<Span, Statement> {
     let if_statement = map(tuple((tag("if"), bool_expr, block)), |(_, e, b)| {
         Statement::If(e, b)
     });
@@ -419,6 +421,6 @@ pub fn statement(input: &str) -> IResult<&str, Statement> {
     ))(input)
 }
 
-pub fn program(input: &str) -> IResult<&str, Block> {
-    map(many0(statement), |statements| Block { statements })(input)
+pub fn program<'a>(input: impl Into<Span<'a>>) -> IResult<Span<'a>, Block> {
+    map(many0(statement), |statements| Block { statements })(input.into())
 }
