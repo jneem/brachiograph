@@ -1,0 +1,16 @@
+fd
+------------
+0 1 fd
+============
+fd 10
+back 40 50
+------------
+6 2 back
+============
+to square :n
+	repeat 4 [fd :n rt 90]
+end
+squirrel
+------------
+41 4 squirrel
+============

@@ -6,7 +6,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, char, multispace0},
-    combinator::{map, verify},
+    combinator::{all_consuming, map, recognize, verify},
     multi::{fold_many0, many0},
     number::complete::double,
     sequence::{delimited, preceded, tuple},
@@ -19,78 +19,111 @@ type Span<'a> = nom_locate::LocatedSpan<&'a str>;
 pub struct Literal(f64);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Ident(String);
+pub struct Ident<'a>(Span<'a>);
+
+impl<'a> Ident<'a> {
+    pub fn name(&self) -> &'a str {
+        *self.0.fragment()
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Op {
+pub enum OpKind {
     Add,
     Sub,
     Mul,
     Div,
 }
 
+#[derive(Clone, Debug)]
+pub struct Op<'a> {
+    pub span: Span<'a>,
+    pub kind: OpKind,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Cmp {
+pub enum CmpKind {
     Eq,
     Lt,
     Gt,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum NumExpr {
+#[derive(Clone, Debug)]
+pub struct Cmp<'a> {
+    pub span: Span<'a>,
+    pub kind: CmpKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum NumExpr<'a> {
     Lit(Literal),
-    Param(Ident),
-    Op(Box<NumExpr>, Op, Box<NumExpr>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct BoolExpr(NumExpr, Cmp, NumExpr);
-
-#[derive(Clone, Debug)]
-pub enum Statement {
-    Def(ProcedureDef),
-    Call(ProcedureCall),
-    If(BoolExpr, Block),
-    Repeat(NumExpr, Block),
+    Param(Ident<'a>),
+    Op(Box<NumExpr<'a>>, Op<'a>, Box<NumExpr<'a>>),
 }
 
 #[derive(Clone, Debug)]
-pub struct Block {
-    pub statements: Vec<Statement>,
+pub struct BoolExpr<'a>(NumExpr<'a>, Cmp<'a>, NumExpr<'a>);
+
+#[derive(Clone, Debug)]
+pub enum Statement<'a> {
+    Def(ProcedureDef<'a>),
+    Call(ProcedureCall<'a>),
+    If(BoolExpr<'a>, Block<'a>),
+    Repeat(NumExpr<'a>, Block<'a>),
 }
 
 #[derive(Clone, Debug)]
-pub struct ProcedureDef {
-    pub name: Ident,
-    pub params: Vec<Ident>,
-    pub body: Block,
+pub struct Block<'a> {
+    pub statements: Vec<Statement<'a>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct ProcedureCall {
-    pub name: Ident,
+pub struct ProcedureDef<'a> {
+    pub name: Ident<'a>,
+    pub params: Vec<Ident<'a>>,
+    pub body: Block<'a>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProcedureCall<'a> {
+    pub name: Ident<'a>,
     // Are params allowed to be booleans?
-    pub params: Vec<NumExpr>,
+    pub params: Vec<NumExpr<'a>>,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-pub enum Error {
+pub enum Error<'a> {
     #[error("wrong number of parameters (expected {expected}, found {found})")]
-    WrongParams { expected: u32, found: u32 },
+    WrongParams {
+        call: Ident<'a>,
+        expected: u32,
+        found: u32,
+    },
     #[error("unknown procedure \"{:?}\"", name.0)]
-    UnknownProcedure { name: Ident },
+    UnknownProcedure { name: Ident<'a> },
     #[error("unknown variable \"{:?}\"", name.0)]
-    UnknownVariable { name: Ident },
+    UnknownVariable { name: Ident<'a> },
 }
 
-impl ProcedureCall {
-    fn check_builtin(&self) -> Result<(), Error> {
-        match self.name.0.as_str() {
+impl<'a> Error<'a> {
+    pub fn span(&self) -> Span<'a> {
+        match self {
+            Error::WrongParams { call, .. } => call.0,
+            Error::UnknownProcedure { name } => name.0,
+            Error::UnknownVariable { name } => name.0,
+        }
+    }
+}
+
+impl<'a> ProcedureCall<'a> {
+    fn check_builtin(&self) -> Result<(), Error<'a>> {
+        match self.name.name() {
             "fd" | "forward" | "bk" | "backward" | "lt" | "left" | "rt" | "right" => {
                 if self.params.len() == 1 {
                     Ok(())
                 } else {
                     Err(Error::WrongParams {
+                        call: self.name.clone(),
                         expected: 1,
                         found: self.params.len() as u32,
                     })
@@ -102,6 +135,7 @@ impl ProcedureCall {
                     Ok(())
                 } else {
                     Err(Error::WrongParams {
+                        call: self.name.clone(),
                         expected: 0,
                         found: self.params.len() as u32,
                     })
@@ -113,10 +147,11 @@ impl ProcedureCall {
         }
     }
 
-    fn exec_builtin(&self, values: &[f64]) -> Result<BuiltIn, Error> {
+    fn exec_builtin(&self, values: &[f64]) -> Result<BuiltIn, Error<'a>> {
         let no_args = || {
             if values.len() > 0 {
                 Err(Error::WrongParams {
+                    call: self.name.clone(),
                     expected: 0,
                     found: values.len() as u32,
                 })
@@ -128,6 +163,7 @@ impl ProcedureCall {
         let one_arg = || {
             if values.len() != 1 {
                 Err(Error::WrongParams {
+                    call: self.name.clone(),
                     expected: 1,
                     found: values.len() as u32,
                 })
@@ -139,6 +175,7 @@ impl ProcedureCall {
         let two_args = || {
             if values.len() != 2 {
                 Err(Error::WrongParams {
+                    call: self.name.clone(),
                     expected: 2,
                     found: values.len() as u32,
                 })
@@ -147,7 +184,7 @@ impl ProcedureCall {
             }
         };
 
-        Ok(match self.name.0.as_str() {
+        Ok(match self.name.name() {
             "arc" => {
                 let (degrees, radius) = two_args()?;
                 BuiltIn::Arc { degrees, radius }
@@ -186,15 +223,15 @@ pub enum BuiltIn {
 }
 
 #[derive(Debug, Default)]
-pub struct Scope<'a> {
-    parent: Option<&'a Scope<'a>>,
-    variables: HashMap<Ident, f64>,
-    procs: HashMap<Ident, ProcedureDef>,
+pub struct Scope<'a, 'input> {
+    parent: Option<&'a Scope<'a, 'input>>,
+    variables: HashMap<&'input str, f64>,
+    procs: HashMap<&'input str, ProcedureDef<'input>>,
 }
 
-impl<'a> Scope<'a> {
-    pub fn lookup(&self, ident: &Ident) -> Result<f64, Error> {
-        match self.variables.get(ident) {
+impl<'a, 'input> Scope<'a, 'input> {
+    pub fn lookup(&self, ident: &Ident<'input>) -> Result<f64, Error<'input>> {
+        match self.variables.get(ident.name()) {
             Some(x) => Ok(*x),
             None => self
                 .parent
@@ -205,45 +242,45 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub fn lookup_proc(&self, ident: &Ident) -> Option<&ProcedureDef> {
+    pub fn lookup_proc(&self, ident: &Ident<'input>) -> Option<&ProcedureDef<'input>> {
         self.procs
-            .get(ident)
+            .get(ident.name())
             .or_else(|| self.parent.and_then(|parent| parent.lookup_proc(ident)))
     }
 
-    pub fn eval_num_expr(&self, expr: &NumExpr) -> Result<f64, Error> {
+    pub fn eval_num_expr(&self, expr: &NumExpr<'input>) -> Result<f64, Error<'input>> {
         match expr {
             NumExpr::Lit(x) => Ok(x.0),
             NumExpr::Param(p) => self.lookup(p),
             NumExpr::Op(lhs, op, rhs) => {
                 let lhs = self.eval_num_expr(&lhs)?;
                 let rhs = self.eval_num_expr(&rhs)?;
-                Ok(match op {
-                    Op::Add => lhs + rhs,
-                    Op::Sub => lhs - rhs,
-                    Op::Mul => lhs * rhs,
-                    Op::Div => lhs / rhs,
+                Ok(match op.kind {
+                    OpKind::Add => lhs + rhs,
+                    OpKind::Sub => lhs - rhs,
+                    OpKind::Mul => lhs * rhs,
+                    OpKind::Div => lhs / rhs,
                 })
             }
         }
     }
 
-    pub fn eval_bool_expr(&self, expr: &BoolExpr) -> Result<bool, Error> {
+    pub fn eval_bool_expr(&self, expr: &BoolExpr<'input>) -> Result<bool, Error<'input>> {
         let lhs = self.eval_num_expr(&expr.0)?;
         let rhs = self.eval_num_expr(&expr.2)?;
-        Ok(match expr.1 {
-            Cmp::Eq => lhs == rhs,
-            Cmp::Lt => lhs < rhs,
-            Cmp::Gt => lhs > rhs,
+        Ok(match expr.1.kind {
+            CmpKind::Eq => lhs == rhs,
+            CmpKind::Lt => lhs < rhs,
+            CmpKind::Gt => lhs > rhs,
         })
     }
 
-    pub fn def(&mut self, proc: ProcedureDef) {
+    pub fn def(&mut self, proc: ProcedureDef<'input>) {
         // TODO: check for duplicate definitions?
-        self.procs.insert(proc.name.clone(), proc);
+        self.procs.insert(proc.name.name(), proc);
     }
 
-    fn sub_scope(&'a self) -> Scope<'a> {
+    fn sub_scope(&'a self) -> Self {
         Scope {
             parent: Some(self),
             variables: HashMap::new(),
@@ -251,7 +288,11 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub fn exec_block(&mut self, output: &mut Vec<BuiltIn>, block: &Block) -> Result<(), Error> {
+    pub fn exec_block(
+        &mut self,
+        output: &mut Vec<BuiltIn>,
+        block: &Block<'input>,
+    ) -> Result<(), Error<'input>> {
         for statement in &block.statements {
             if let Statement::Def(def) = statement {
                 self.def(def.clone());
@@ -283,8 +324,8 @@ impl<'a> Scope<'a> {
     pub fn exec_proc_call(
         &self,
         output: &mut Vec<BuiltIn>,
-        call: &ProcedureCall,
-    ) -> Result<(), Error> {
+        call: &ProcedureCall<'input>,
+    ) -> Result<(), Error<'input>> {
         let params: Result<Vec<f64>, _> = call
             .params
             .iter()
@@ -293,11 +334,18 @@ impl<'a> Scope<'a> {
         if let Some(proc) = self.lookup_proc(&call.name) {
             if call.params.len() != proc.params.len() {
                 return Err(Error::WrongParams {
+                    call: call.name.clone(),
                     expected: proc.params.len() as u32,
                     found: call.params.len() as u32,
                 });
             }
-            let variables = proc.params.iter().cloned().zip(params?).collect();
+            let variables = proc
+                .params
+                .iter()
+                .cloned()
+                .map(|ident| ident.name())
+                .zip(params?)
+                .collect();
             let mut scope = Scope {
                 parent: Some(self),
                 variables,
@@ -322,10 +370,9 @@ where
 }
 
 pub fn ident(input: Span) -> IResult<Span, Ident> {
-    verify(
-        map(ws(alpha1), |s: Span| Ident(s.to_string())),
-        |i: &Ident| !RESERVED.contains(&i.0.as_str()),
-    )(input)
+    verify(map(ws(alpha1), |s: Span| Ident(s)), |i: &Ident| {
+        !RESERVED.contains(&i.name())
+    })(input)
 }
 
 pub fn param(input: Span) -> IResult<Span, Ident> {
@@ -336,8 +383,12 @@ pub fn literal(input: Span) -> IResult<Span, Literal> {
     map(ws(double), |x| Literal(x))(input)
 }
 
-pub fn op<'a, O: Copy + 'a>(ch: char, op: O) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O> {
-    ws(map(char(ch), move |_| op))
+pub fn op<'a>(ch: char, kind: OpKind) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Op<'a>> {
+    ws(map(recognize(char(ch)), move |span| Op { span, kind }))
+}
+
+pub fn cmp<'a>(ch: char, kind: CmpKind) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Cmp<'a>> {
+    ws(map(recognize(char(ch)), move |span| Cmp { span, kind }))
 }
 
 pub fn atom(input: Span) -> IResult<Span, NumExpr> {
@@ -348,8 +399,8 @@ pub fn atom(input: Span) -> IResult<Span, NumExpr> {
 }
 
 pub fn term(input: Span) -> IResult<Span, NumExpr> {
-    let mul = op('*', Op::Mul);
-    let div = op('/', Op::Div);
+    let mul = op('*', OpKind::Mul);
+    let div = op('/', OpKind::Div);
     let (input, init) = atom.parse(input)?;
 
     fold_many0(
@@ -360,8 +411,8 @@ pub fn term(input: Span) -> IResult<Span, NumExpr> {
 }
 
 pub fn num_expr(input: Span) -> IResult<Span, NumExpr> {
-    let add = op('+', Op::Add);
-    let sub = op('-', Op::Sub);
+    let add = op('+', OpKind::Add);
+    let sub = op('-', OpKind::Sub);
     let (input, init) = term.parse(input)?;
 
     fold_many0(
@@ -372,7 +423,11 @@ pub fn num_expr(input: Span) -> IResult<Span, NumExpr> {
 }
 
 pub fn bool_expr(input: Span) -> IResult<Span, BoolExpr> {
-    let cmp = alt((op('=', Cmp::Eq), op('<', Cmp::Lt), op('>', Cmp::Gt)));
+    let cmp = alt((
+        cmp('=', CmpKind::Eq),
+        cmp('<', CmpKind::Lt),
+        cmp('>', CmpKind::Gt),
+    ));
     map(tuple((num_expr, cmp, num_expr)), |(a, cmp, b)| {
         BoolExpr(a, cmp, b)
     })(input)
@@ -421,6 +476,24 @@ pub fn statement(input: Span) -> IResult<Span, Statement> {
     ))(input)
 }
 
-pub fn program<'a>(input: impl Into<Span<'a>>) -> IResult<Span<'a>, Block> {
-    map(many0(statement), |statements| Block { statements })(input.into())
+pub fn program<'a>(input: impl Into<Span<'a>>) -> IResult<Span<'a>, Block<'a>> {
+    all_consuming(map(many0(statement), |statements| Block { statements }))(input.into())
+}
+
+pub struct Program<'a> {
+    code: Block<'a>,
+}
+
+impl<'a> Program<'a> {
+    pub fn parse(s: &str) -> Result<Program, nom::Err<nom::error::Error<Span>>> {
+        let (_, code) = program(s)?;
+        Ok(Program { code })
+    }
+
+    pub fn exec(&'a self) -> Result<Vec<BuiltIn>, Error<'a>> {
+        let mut scope = Scope::default();
+        let mut builtins = Vec::new();
+        scope.exec_block(&mut builtins, &self.code)?;
+        Ok(builtins)
+    }
 }
