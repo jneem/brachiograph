@@ -118,6 +118,17 @@ impl<'a> Error<'a> {
 impl<'a> ProcedureCall<'a> {
     fn check_builtin(&self) -> Result<(), Error<'a>> {
         match self.name.name() {
+            "arc" => {
+                if self.params.len() == 2 {
+                    Ok(())
+                } else {
+                    Err(Error::WrongParams {
+                        call: self.name.clone(),
+                        expected: 2,
+                        found: self.params.len() as u32,
+                    })
+                }
+            }
             "fd" | "forward" | "bk" | "backward" | "lt" | "left" | "rt" | "right" => {
                 if self.params.len() == 1 {
                     Ok(())
