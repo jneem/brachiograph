@@ -1,0 +1,14 @@
+[package]
+name = "brachiograph_host"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { version = "1.0.68", features = ["backtrace"] }
+brachiograph = { version = "0.1.0", path = "../brachiograph" }
+brachiologo = { version = "0.1.1", path = "../brachiologo" }
+kurbo = "0.9.0"
+log = "0.4.17"
+serialport = "4.2.0"

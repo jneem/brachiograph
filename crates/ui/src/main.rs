@@ -1,4 +1,3 @@
-// TODO: factor out code that's duplicated from feeder
 // TODO: save/load
 // TODO: feedback and error messages
 
@@ -15,15 +14,10 @@ use brachiograph::Angle;
 use brachiologo::Program;
 use dioxus::prelude::*;
 use dioxus_desktop::{
-    tao::{
-        accelerator::Accelerator,
-        keyboard::{KeyCode, ModifiersState},
-        menu::{MenuBar, MenuItem, MenuItemAttributes},
-    },
+    tao::menu::{MenuBar, MenuItem},
     Config, WindowBuilder,
 };
 use kurbo::{Point, Rect, Vec2};
-use rfd::FileDialog;
 use serialport::{SerialPort, SerialPortType};
 
 const VENDOR_ID: u16 = 0xca6d;

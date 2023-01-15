@@ -29,5 +29,11 @@ pkgs.mkShell {
     gtk3
     libayatana-appindicator
     dioxusCli
+    nodejs
+    nodePackages.typescript-language-server
+    nodePackages.svelte-language-server
   ];
+
+  # FIXME: this is for cargo-tauri, installed with `cargo install`
+  PATH = "$HOME/.cargo/bin:$PATH";
 }
