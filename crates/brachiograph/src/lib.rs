@@ -281,6 +281,14 @@ impl core::ops::AddAssign<Angle> for Angle {
     }
 }
 
+impl core::ops::Sub<Angle> for Angle {
+    type Output = Angle;
+
+    fn sub(self, rhs: Angle) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
 /// Represented as milliseconds, between 0 and 1000.
 #[derive(Debug)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]

@@ -15,10 +15,15 @@ use brachiograph::Angle;
 use brachiologo::Program;
 use dioxus::prelude::*;
 use dioxus_desktop::{
-    tao::menu::{MenuBar, MenuItem},
+    tao::{
+        accelerator::Accelerator,
+        keyboard::{KeyCode, ModifiersState},
+        menu::{MenuBar, MenuItem, MenuItemAttributes},
+    },
     Config, WindowBuilder,
 };
 use kurbo::{Point, Rect, Vec2};
+use rfd::FileDialog;
 use serialport::{SerialPort, SerialPortType};
 
 const VENDOR_ID: u16 = 0xca6d;
@@ -183,15 +188,20 @@ fn interpret<'input>(code: &'input str) -> anyhow::Result<Vec<Op>> {
                 // Arc does not move the turtle or change the heading.
                 let start = pos + Vec2::from_angle(angle.radians().to_num()) * radius;
                 let (x, y) = clamp(start);
+                ret.push(Op::PenUp);
                 ret.push(Op::MoveTo { x, y });
+                ret.push(Op::PenDown);
                 for i in (0..=(degrees as i32)).step_by(10) {
-                    let angle = angle + Angle::from_degrees(i);
+                    // Arc goes clockwise
+                    let angle = angle - Angle::from_degrees(i);
                     let p = pos + Vec2::from_angle(angle.radians().to_num()) * radius;
                     let (x, y) = clamp(p);
                     ret.push(Op::MoveTo { x, y });
                 }
                 let (x, y) = clamp(pos);
+                ret.push(Op::PenUp);
                 ret.push(Op::MoveTo { x, y });
+                ret.push(Op::PenDown);
             }
             brachiologo::BuiltIn::Forward(dist) => {
                 pos += Vec2::from_angle(angle.radians().to_num()) * dist;
@@ -228,6 +238,17 @@ fn main() {
     let state = State::default();
     let mut file_menu = MenuBar::new();
     file_menu.add_native_item(MenuItem::Quit);
+
+    /*
+    let save = MenuItemAttributes::new("Save")
+        .with_accelerators(&Accelerator::new(ModifiersState::CONTROL, KeyCode::KeyS));
+
+    let open = MenuItemAttributes::new("Open")
+        .with_accelerators(&Accelerator::new(ModifiersState::CONTROL, KeyCode::KeyO));
+    file_menu.add_item(save);
+    file_menu.add_item(open);
+    */
+
     let mut menu = MenuBar::new();
     menu.add_submenu("File", true, file_menu);
     let config = Config::new().with_window(
