@@ -16,6 +16,17 @@
   let statusKind = MsgKind.Info;
   let ready = false;
 
+  listen('save', (event) => {
+    const path: string = event.payload;
+    invoke('write_file', { path, text })
+  })
+
+  listen('load', (event) => {
+    console.log(text);
+    text = event.payload;
+    console.log(text);
+  })
+
   listen('brachio-msg', (event) => {
     if (event.payload == 'Missing') {
       ready = false

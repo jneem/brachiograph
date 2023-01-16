@@ -6,9 +6,10 @@
 use serde::Serialize;
 use std::sync::{
     mpsc::{channel, Receiver, Sender},
-    Arc, Mutex,
+    Mutex,
 };
-use tauri::{App, AppHandle, Manager};
+use tauri::api::dialog::FileDialogBuilder;
+use tauri::{AppHandle, CustomMenuItem, Manager, Menu, MenuItem, Submenu};
 
 use brachiograph_host::{Op, Serial};
 use brachiologo::Program;
@@ -52,14 +53,42 @@ fn main() {
     let (tx, rx) = channel();
     let state = State { tx: Mutex::new(tx) };
 
+    let quit = MenuItem::Quit;
+    let open = CustomMenuItem::new("open", "Open").accelerator("Ctrl+O");
+    let save = CustomMenuItem::new("save", "Save").accelerator("Ctrl+S");
+    let file = Submenu::new(
+        "File",
+        Menu::new()
+            .add_item(open)
+            .add_item(save)
+            .add_native_item(quit),
+    );
+    let menu = Menu::new().add_submenu(file);
+
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle();
             std::thread::spawn(move || brachio_thread(handle, rx));
             Ok(())
         })
+        .menu(menu)
+        .on_menu_event(|event| match event.menu_item_id() {
+            "save" => FileDialogBuilder::new().save_file(move |file_path| {
+                if let Some(path) = file_path {
+                    event.window().emit("save", path).unwrap();
+                }
+            }),
+            "open" => FileDialogBuilder::new().pick_file(move |file_path| {
+                if let Some(path) = file_path {
+                    if let Ok(text) = std::fs::read_to_string(path) {
+                        event.window().emit("load", text).unwrap();
+                    }
+                }
+            }),
+            _ => {}
+        })
         .manage(state)
-        .invoke_handler(tauri::generate_handler![run, check_status])
+        .invoke_handler(tauri::generate_handler![run, check_status, write_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -153,4 +182,11 @@ fn run(code: String, state: tauri::State<State>) {
 fn check_status(state: tauri::State<State>) {
     println!("check status");
     state.tx.lock().unwrap().send(Cmd::Ping).unwrap();
+}
+
+#[tauri::command]
+fn write_file(path: String, text: String) {
+    if let Err(e) = std::fs::write(path, text) {
+        println!("failed to write: {e}");
+    }
 }

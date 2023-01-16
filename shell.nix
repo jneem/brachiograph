@@ -36,4 +36,5 @@ pkgs.mkShell {
 
   # FIXME: this is for cargo-tauri, installed with `cargo install`
   PATH = "$HOME/.cargo/bin:$PATH";
+  XDG_DATA_DIRS = "${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}";
 }

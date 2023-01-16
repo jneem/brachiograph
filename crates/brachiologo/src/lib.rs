@@ -131,7 +131,7 @@ impl<'a> ProcedureCall<'a> {
                     })
                 }
             }
-            "fd" | "forward" | "bk" | "backward" | "lt" | "left" | "rt" | "right" => {
+            "fd" | "forward" | "bk" | "back" | "backward" | "lt" | "left" | "rt" | "right" => {
                 if self.params.len() == 1 {
                     Ok(())
                 } else {
