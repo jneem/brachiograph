@@ -75,6 +75,11 @@ impl Serial {
             write: s,
         })
     }
+
+    pub fn name(&self) -> Option<String> {
+        self.write.name()
+    }
+
     // Send a single op element to brachiograph, blocking if necessary.
     pub fn send(&mut self, op: Op) -> anyhow::Result<()> {
         log::debug!("{:?}", op);
@@ -88,6 +93,8 @@ impl Serial {
                     writeln!(&mut self.write, "penup")?;
                 }
                 Op::MoveTo { x, y } => {
+                    let x = x.round() as i32;
+                    let y = y.round() as i32;
                     writeln!(&mut self.write, "moveto {x} {y}")?;
                 }
             }

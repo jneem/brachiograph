@@ -7,13 +7,15 @@ use nom::{
     bytes::complete::tag,
     character::complete::{alpha1, char, multispace0},
     combinator::{all_consuming, map, recognize, verify},
+    error::{ErrorKind, ParseError as _},
     multi::{fold_many0, many0},
     number::complete::double,
     sequence::{delimited, preceded, tuple},
     IResult, Parser,
 };
 
-type Span<'a> = nom_locate::LocatedSpan<&'a str>;
+pub type Span<'a> = nom_locate::LocatedSpan<&'a str>;
+pub type ParseError<'a> = nom::error::Error<Span<'a>>;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Literal(f64);
@@ -496,8 +498,13 @@ pub struct Program<'a> {
 }
 
 impl<'a> Program<'a> {
-    pub fn parse(s: &'a str) -> Result<Program<'a>, nom::Err<nom::error::Error<Span<'a>>>> {
-        let (_, code) = program(s)?;
+    pub fn parse(s: &'a str) -> Result<Program<'a>, ParseError<'a>> {
+        let (_, code) = program(s).map_err(|e| match e {
+            nom::Err::Error(e) | nom::Err::Failure(e) => e,
+            nom::Err::Incomplete(_) => {
+                nom::error::Error::from_error_kind(Span::from(s), ErrorKind::Complete)
+            }
+        })?;
         Ok(Program { code })
     }
 
