@@ -3,6 +3,7 @@ on:
   push:
     tags:
       - 'ui-v*'
+  workflow_dispatch:
 
 jobs:
   publish-tauri:
