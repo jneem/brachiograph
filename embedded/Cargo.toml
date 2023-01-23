@@ -26,6 +26,7 @@ fugit = { version = "0.3.6", features = ["defmt"] }
 itoa = "1.0.5"
 nb = "1.0.0"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
+postcard = { version = "1.0.2", features = ["defmt"] }
 ringbuffer = { version = "0.11.1", default-features = false }
 stm32f1xx-hal = { version = "0.10", features = ["rt", "stm32f103", "medium"] }
 systick-monotonic = "1.0.1"

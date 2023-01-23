@@ -3,7 +3,7 @@
 
 use brachiograph_runner as _;
 
-use brachiograph::{geom, Angle, Op};
+use brachiograph::{geom, Angle, SlowOp};
 use ringbuffer::{
     ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferExt, RingBufferWrite,
 };
@@ -19,7 +19,7 @@ pub struct OpQueue {
     // TODO: would be sort of nice if we can make this big, but it overflows the stack. We can
     // probably shrink `Op` by a factor of 2 or more. It isn't a huge deal, though: we're unlikely
     // to process more than a handful of ops per second, so there's no need to queue up too many.
-    queue: RingBuffer<Op, 32>,
+    queue: RingBuffer<SlowOp, 32>,
 }
 
 include!("../calibration_data.rs");
@@ -39,7 +39,7 @@ fn elbow_config() -> brachiograph::pwm::Pwm {
 }
 
 impl OpQueue {
-    fn enqueue(&mut self, op: Op) -> Result<(), ()> {
+    fn enqueue(&mut self, op: SlowOp) -> Result<(), ()> {
         if self.queue.is_full() {
             Err(())
         } else {
@@ -143,8 +143,8 @@ impl Pwms {
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
     use super::{Duration, OpQueue, Pwms};
-    use brachiograph::{geom, Brachiograph, Op};
-    use brachiograph_runner::serial::{Status, UsbSerial};
+    use brachiograph::{geom, Brachiograph, FastOp, Op, Resp, SlowOp};
+    use brachiograph_runner::serial::UsbSerial;
     use cortex_m::asm;
     use ringbuffer::RingBufferRead;
     use stm32f1xx_hal::{
@@ -160,7 +160,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        serial: UsbSerial<Op, Status>,
+        serial: UsbSerial,
         op_queue: OpQueue,
         state: Brachiograph,
         _led: stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
@@ -257,7 +257,25 @@ mod app {
         // Doc says "USB High Priority or CAN TX"
     }
 
-    #[task(priority = 2, binds = USB_LP_CAN_RX0, shared = [serial, op_queue], local = [geom_config])]
+    fn validate_slow_op(geom_config: &geom::Config, op: &SlowOp) -> bool {
+        if let SlowOp::MoveTo(p) = &op {
+            geom_config.coord_is_valid(p.x, p.y)
+        } else {
+            true
+        }
+    }
+
+    fn handle_fast_op(op_queue: &mut OpQueue, serial: &mut UsbSerial, op: &FastOp) {
+        match op {
+            FastOp::Cancel => {
+                op_queue.clear();
+                let _ = serial.send(Resp::Ack);
+            }
+            FastOp::Calibrate(_, _, _) => todo!(),
+        }
+    }
+
+    #[task(priority = 2, binds = USB_LP_CAN_RX0, shared = [serial, op_queue, state], local = [geom_config])]
     fn usb_rx0(cx: usb_rx0::Context) {
         let mut serial = cx.shared.serial;
         let mut op_queue = cx.shared.op_queue;
@@ -267,20 +285,21 @@ mod app {
                 return;
             }
             while let Some(op) = serial.read() {
-                if let Op::MoveTo(p) = &op {
-                    if !geom_config.coord_is_valid(p.x, p.y) {
-                        let _ = serial.send(Status::Nack);
-                        continue;
+                match op {
+                    Op::Fast(op) => handle_fast_op(op_queue, serial, &op),
+                    Op::Slow(op) => {
+                        if validate_slow_op(geom_config, &op) {
+                            if op_queue.enqueue(op).is_err() {
+                                let _ = serial.send(Resp::QueueFull);
+                            } else {
+                                let _ = serial.send(Resp::Ack);
+                            }
+                        } else {
+                            // TODO: specify the error in the response
+                            let _ = serial.send(Resp::Nack);
+                            continue;
+                        }
                     }
-                } else if matches!(op, Op::Cancel) {
-                    op_queue.clear();
-                    let _ = serial.send(Status::Ack);
-                }
-
-                if op_queue.enqueue(op).is_err() {
-                    let _ = serial.send(Status::QueueFull);
-                } else {
-                    let _ = serial.send(Status::Ack);
                 }
             }
             serial.write();
@@ -305,22 +324,21 @@ mod app {
 
             if let Some(mut resting) = state.resting() {
                 if let Some(op) = op_queue.queue.dequeue() {
-                    //defmt::println!("popped op {}", op);
                     match op {
-                        Op::PenUp => {
+                        SlowOp::PenUp => {
                             resting.pen_up(geom_now);
                         }
-                        Op::PenDown => {
+                        SlowOp::PenDown => {
                             resting.pen_down(geom_now);
                         }
-                        Op::MoveTo(point) => {
+                        SlowOp::MoveTo(point) => {
                             // TODO: error handling
                             if resting.move_to(geom_now, point.x, point.y).is_err() {
                                 defmt::println!("failed to move");
                             }
                         }
-                        Op::Cancel => {
-                            defmt::println!("expected cancel to be handled already!");
+                        SlowOp::ChangePosition(_delta) => {
+                            // TODO: add a "calibration mode" state to the brachiograph
                         }
                     }
                 }

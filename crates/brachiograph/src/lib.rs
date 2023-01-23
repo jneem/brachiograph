@@ -1,12 +1,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use core::str::FromStr;
 use fixed::traits::ToFixed;
 
 pub mod geom;
 pub mod pwm;
 pub use fixed;
 pub use fugit;
+use serde::{Deserialize, Serialize};
 
 /// The type that we use for most of our numerical computations.
 ///
@@ -217,7 +217,7 @@ impl Brachiograph {
 
 /// We represent angles between 0 and 180 degrees (the theoretical range of the servos)
 /// as minutes.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Angle(Fixed);
 
 #[cfg(target_os = "none")]
@@ -310,14 +310,14 @@ impl From<core::time::Duration> for Delay {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct Angles {
     pub shoulder: Angle,
     pub elbow: Angle,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub struct Point {
     #[cfg_attr(target_os = "none", defmt(Display2Format))]
@@ -326,57 +326,78 @@ pub struct Point {
     pub y: Fixed,
 }
 
-#[derive(Debug)]
+/// The "raw" position of the shoulder and elbow servos.
+///
+/// This differs from [`Angles`] in that `Angles` have been calibrated.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
-pub enum Op {
-    Cancel,
+pub struct ServoPosition {
+    pub shoulder: u16,
+    pub elbow: u16,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
+pub struct ServoPositionDelta {
+    pub shoulder: i16,
+    pub elbow: i16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServoCalibration {
+    data: arrayvec::ArrayVec<(i16, u16), 16>,
+}
+
+#[cfg(target_os = "none")]
+impl defmt::Format for ServoCalibration {
+    fn format(&self, _fmt: defmt::Formatter) {
+        todo!()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
+pub enum Joint {
+    Shoulder,
+    Elbow,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
+pub enum Direction {
+    Increasing,
+    Decreasing,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
+pub enum SlowOp {
+    ChangePosition(ServoPositionDelta),
     MoveTo(Point),
     PenUp,
     PenDown,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
-pub enum OpParseErr {
-    UnknownOp,
-    BadAngles,
-    BadPoint,
+pub enum FastOp {
+    Cancel,
+    Calibrate(Joint, Direction, ServoCalibration),
 }
 
-impl FromStr for Op {
-    type Err = OpParseErr;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut words = s.trim().split_ascii_whitespace();
-        match words.next() {
-            Some("moveto") => {
-                let x: i16 = words
-                    .next()
-                    .ok_or(OpParseErr::BadPoint)?
-                    .parse()
-                    .map_err(|_| OpParseErr::BadPoint)?;
-                let y: i16 = words
-                    .next()
-                    .ok_or(OpParseErr::BadPoint)?
-                    .parse()
-                    .map_err(|_| OpParseErr::BadPoint)?;
-                Ok(Op::MoveTo(Point {
-                    x: Fixed::from_num(x) / 10,
-                    y: Fixed::from_num(y) / 10,
-                }))
-            }
-            Some("penup") => Ok(Op::PenUp),
-            Some("pendown") => Ok(Op::PenDown),
-            _ => Err(OpParseErr::UnknownOp),
-        }
-    }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(target_os = "none", derive(defmt::Format))]
+pub enum Op {
+    Slow(SlowOp),
+    Fast(FastOp),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum Resp {
+    Ack,
+    Nack,
+    QueueFull,
     Angles(Angles),
-    Busy,
-    PenUp,
-    PenDown,
+    CurPosition(ServoPosition),
 }

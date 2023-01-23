@@ -13,6 +13,7 @@ clap = { version = "4.0.32", features = ["derive"] }
 crossterm = "0.25.0"
 fontdb = "0.11.1"
 kurbo = "0.9.0"
+postcard = { version = "1.0.2", features = ["use-std"] }
 serialport = "4.2.0"
 termion = "2.0.1"
 usvg = "0.28.0"

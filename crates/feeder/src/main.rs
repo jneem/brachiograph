@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
-use brachiograph::Angle;
+use brachiograph::{Angle, Fixed, Op, Resp, SlowOp};
 use clap::Parser;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use serialport::SerialPort;
@@ -118,15 +118,15 @@ fn load_logo(path: &Path) -> anyhow::Result<Vec<brachiologo::BuiltIn>> {
     Ok(output)
 }
 
-fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<Op> {
+fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<SlowOp> {
     let mut pos = rect.center();
     let mut angle = Angle::from_degrees(90);
     let mut ret = Vec::new();
 
     let clamp = |pt: Point| {
-        (
-            pt.x.clamp(rect.min_x(), rect.max_x()).round() as i32,
-            pt.y.clamp(rect.min_y(), rect.max_y()).round() as i32,
+        Point::new(
+            pt.x.clamp(rect.min_x(), rect.max_x()),
+            pt.y.clamp(rect.min_y(), rect.max_y()),
         )
     };
 
@@ -134,13 +134,11 @@ fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<Op> {
         match step {
             brachiologo::BuiltIn::Forward(dist) => {
                 pos += Vec2::from_angle(angle.radians().to_num()) * *dist;
-                let (x, y) = clamp(pos);
-                ret.push(Op::MoveTo { x, y });
+                ret.push(p_to_op(clamp(pos)));
             }
             brachiologo::BuiltIn::Back(dist) => {
                 pos -= Vec2::from_angle(angle.radians().to_num()) * *dist;
-                let (x, y) = clamp(pos);
-                ret.push(Op::MoveTo { x, y });
+                ret.push(p_to_op(clamp(pos)));
             }
             brachiologo::BuiltIn::Left(ang) => {
                 angle += Angle::from_degrees(*ang);
@@ -150,10 +148,10 @@ fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<Op> {
             }
             brachiologo::BuiltIn::ClearScreen => {}
             brachiologo::BuiltIn::PenUp => {
-                ret.push(Op::PenUp);
+                ret.push(SlowOp::PenUp);
             }
             brachiologo::BuiltIn::PenDown => {
-                ret.push(Op::PenDown);
+                ret.push(SlowOp::PenDown);
             }
         }
     }
@@ -161,30 +159,17 @@ fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<Op> {
     ret
 }
 
-#[derive(Debug)]
-enum Op {
-    PenUp,
-    PenDown,
-    MoveTo { x: i32, y: i32 },
-}
-
-fn to_ops(path: &BezPath) -> Vec<Op> {
+fn to_ops(path: &BezPath) -> Vec<SlowOp> {
     let mut ret = Vec::new();
-    fn round_point(p: &kurbo::Point) -> Op {
-        Op::MoveTo {
-            x: (p.x * 10.0).round() as i32,
-            y: (p.y * 10.0).round() as i32,
-        }
-    }
 
     for el in path {
         match el {
             PathEl::MoveTo(p) => {
-                ret.push(Op::PenUp);
-                ret.push(round_point(&p));
-                ret.push(Op::PenDown);
+                ret.push(SlowOp::PenUp);
+                ret.push(p_to_op(p));
+                ret.push(SlowOp::PenDown);
             }
-            PathEl::LineTo(p) => ret.push(round_point(&p)),
+            PathEl::LineTo(p) => ret.push(p_to_op(p)),
             _ => unreachable!(),
         }
     }
@@ -192,27 +177,20 @@ fn to_ops(path: &BezPath) -> Vec<Op> {
 }
 
 // Send a single op element to brachiograph, blocking if necessary.
-fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
+fn send(serial: &mut Serial, op: SlowOp) -> anyhow::Result<()> {
     println!("{:?}", op);
-    let mut resp = String::new();
     loop {
-        match op {
-            Op::PenDown => {
-                writeln!(&mut serial.write, "pendown")?;
-            }
-            Op::PenUp => {
-                writeln!(&mut serial.write, "penup")?;
-            }
-            Op::MoveTo { x, y } => {
-                writeln!(&mut serial.write, "moveto {x} {y}")?;
-            }
-        }
+        let msg = postcard::to_stdvec_cobs(&Op::Slow(op.clone()))?;
+        serial.write.write_all(&msg)?;
 
-        resp.clear();
-        serial.read.read_line(&mut resp)?;
-        match dbg!(resp.trim()) {
-            "ack" => break,
-            "queue full" => {
+        let mut read = serial.read.fill_buf()?.to_vec();
+        let (msg, remaining) = postcard::take_from_bytes_cobs(&mut read)?;
+        let remaining_len = remaining.len();
+        drop(remaining);
+        serial.read.consume(read.len() - remaining_len);
+        match dbg!(msg) {
+            Resp::Ack => break,
+            Resp::QueueFull => {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 continue;
             }
@@ -221,6 +199,14 @@ fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn p_to_op(p: impl Into<Point>) -> SlowOp {
+    let p = p.into();
+    SlowOp::MoveTo(brachiograph::Point {
+        x: Fixed::from_num(p.x),
+        y: Fixed::from_num(p.y),
+    })
 }
 
 fn main() -> anyhow::Result<()> {
@@ -245,17 +231,17 @@ fn main() -> anyhow::Result<()> {
             .collect()
     } else if ext == Some("logo") {
         let turtle = load_logo(&args.input)?;
-        send(&mut serial, Op::MoveTo { x: 0, y: 90 })?;
-        send(&mut serial, Op::PenDown)?;
-        run_turtle(&turtle, Rect::new(-80.0, 50.0, 80.0, 130.0))
+        send(&mut serial, p_to_op((0., 9.)))?;
+        send(&mut serial, SlowOp::PenDown)?;
+        run_turtle(&turtle, Rect::new(-8.0, 5.0, 8.0, 13.0))
     } else {
         bail!("didn't recognize input file type");
     };
     for op in ops {
         send(&mut serial, op)?;
     }
-    send(&mut serial, Op::PenUp)?;
-    send(&mut serial, Op::MoveTo { x: -80, y: 80 })?;
+    send(&mut serial, SlowOp::PenUp)?;
+    send(&mut serial, p_to_op((-8., 8.)))?;
 
     Ok(())
 }
