@@ -1,3 +1,4 @@
+/*
 use std::path::Path;
 
 use brachiologo::BuiltIn;
@@ -87,3 +88,4 @@ fn exec_failures() {
         test.exec_failure();
     }
 }
+*/

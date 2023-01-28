@@ -14,6 +14,10 @@ use nom::{
     IResult, Parser,
 };
 
+mod parse;
+mod typ;
+
+/*
 pub type Span<'a> = nom_locate::LocatedSpan<&'a str>;
 pub type ParseError<'a> = nom::error::Error<Span<'a>>;
 
@@ -35,6 +39,9 @@ pub enum OpKind {
     Sub,
     Mul,
     Div,
+    Eq,
+    Lt,
+    Gt,
 }
 
 #[derive(Clone, Debug)]
@@ -43,28 +50,12 @@ pub struct Op<'a> {
     pub kind: OpKind,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum CmpKind {
-    Eq,
-    Lt,
-    Gt,
-}
-
-#[derive(Clone, Debug)]
-pub struct Cmp<'a> {
-    pub span: Span<'a>,
-    pub kind: CmpKind,
-}
-
 #[derive(Clone, Debug)]
 pub enum NumExpr<'a> {
     Lit(Literal),
     Param(Ident<'a>),
     Op(Box<NumExpr<'a>>, Op<'a>, Box<NumExpr<'a>>),
 }
-
-#[derive(Clone, Debug)]
-pub struct BoolExpr<'a>(NumExpr<'a>, Cmp<'a>, NumExpr<'a>);
 
 #[derive(Clone, Debug)]
 pub enum Statement<'a> {
@@ -515,3 +506,4 @@ impl<'a> Program<'a> {
         Ok(builtins)
     }
 }
+*/

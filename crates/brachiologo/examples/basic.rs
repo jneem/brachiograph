@@ -1,3 +1,4 @@
+/*
 use brachiologo::{program, Scope};
 
 fn main() {
@@ -9,3 +10,5 @@ fn main() {
     scope.exec_block(&mut output, &prog).unwrap();
     dbg!(output);
 }
+*/
+fn main() {}
