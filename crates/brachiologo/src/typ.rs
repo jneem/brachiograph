@@ -7,7 +7,31 @@ pub struct Token {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum OpKind {
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn union(&self, other: Span) -> Span {
+        Span {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+}
+
+impl From<crate::parse::Span<'_>> for Span {
+    fn from(sp: crate::parse::Span) -> Self {
+        Span {
+            start: sp.location_offset(),
+            end: sp.location_offset() + sp.fragment().len(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Op {
     Add,
     Sub,
     Mul,
@@ -17,43 +41,65 @@ pub enum OpKind {
     Gt,
 }
 
-impl OpKind {
+impl Op {
     pub fn priority(&self) -> Priority {
         match self {
-            OpKind::Add | OpKind::Sub => Priority::Add,
-            OpKind::Mul | OpKind::Div => Priority::Mul,
-            OpKind::Eq | OpKind::Lt | OpKind::Gt => Priority::Cmp,
+            Op::Add | Op::Sub => Priority::Add,
+            Op::Mul | Op::Div => Priority::Mul,
+            Op::Eq | Op::Lt | Op::Gt => Priority::Cmp,
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            OpKind::Add => "+",
-            OpKind::Sub => "-",
-            OpKind::Mul => "*",
-            OpKind::Div => "/",
-            OpKind::Eq => "=",
-            OpKind::Lt => "<",
-            OpKind::Gt => ">",
+            Op::Add => "+",
+            Op::Sub => "-",
+            Op::Mul => "*",
+            Op::Div => "/",
+            Op::Eq => "=",
+            Op::Lt => "<",
+            Op::Gt => ">",
         }
     }
 
     pub fn eval(&self, lhs: &Expr, rhs: &Expr) -> Result<Expr, EvalError> {
-        let Expr::Val(Val::Num(lhs)) = lhs else {
+        let ExprKind::Val(Val::Num(l)) = lhs.e else {
             return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: lhs.clone() });
         };
-        let Expr::Val(Val::Num(rhs)) = rhs else {
+        let ExprKind::Val(Val::Num(r)) = rhs.e else {
             return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: rhs.clone() });
         };
-        Ok(Expr::Val(match self {
-            OpKind::Add => Val::Num(rhs + lhs),
-            OpKind::Sub => Val::Num(rhs - lhs),
-            OpKind::Mul => Val::Num(rhs * lhs),
-            OpKind::Div => Val::Num(rhs / lhs), // TODO: check for zero
-            OpKind::Eq => Val::Bool(rhs == lhs),
-            OpKind::Lt => Val::Bool(rhs < lhs),
-            OpKind::Gt => Val::Bool(rhs > lhs),
-        }))
+        let v = match self {
+            Op::Add => Val::Num(r + l),
+            Op::Sub => Val::Num(r - l),
+            Op::Mul => Val::Num(r * l),
+            Op::Div => Val::Num(r / l), // TODO: check for zero
+            Op::Eq => Val::Bool(r == l),
+            Op::Lt => Val::Bool(r < l),
+            Op::Gt => Val::Bool(r > l),
+        };
+        let span = lhs.span.union(rhs.span);
+        Ok(Expr {
+            e: ExprKind::Val(v),
+            span,
+        })
+    }
+}
+
+impl TryFrom<char> for Op {
+    type Error = ();
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        Ok(match value {
+            '+' => Op::Add,
+            '-' => Op::Sub,
+            '*' => Op::Mul,
+            '/' => Op::Div,
+            '=' => Op::Eq,
+            '<' => Op::Lt,
+            '>' => Op::Gt,
+            _ => Err(())?,
+        })
     }
 }
 
@@ -64,14 +110,20 @@ pub enum Val {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Expr {
+pub enum ExprKind {
     Val(Val),
     Var(String),
     Word(String),
     Proc(Proc), // TODO: reference equality?
-    Op(OpKind),
+    Op(Op),
     List(Vec<Expr>),
     Quote(Box<Expr>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr {
+    pub e: ExprKind,
+    pub span: Span,
 }
 
 pub struct ProgState {
@@ -149,28 +201,29 @@ pub enum EvalError {
 
 impl Expr {
     pub fn eval(&self, env: &mut Env) -> Result<Option<Expr>, EvalError> {
-        match self {
+        let e = match &self.e {
             // TODO: what does a word evaluate to?
-            Expr::Val(_) => Ok(Some(self.clone())),
-            Expr::Quote(v) => Ok(Some(Expr::clone(v))),
-            Expr::Word(w) => {
-                Ok(Some(Expr::Proc(env.lookup_proc(&w).ok_or_else(|| {
+            ExprKind::Val(_) => Some(self.e.clone()),
+            ExprKind::Quote(v) => Some(ExprKind::clone(&v.e)),
+            ExprKind::Word(w) => {
+                Some(ExprKind::Proc(env.lookup_proc(&w).ok_or_else(|| {
                     EvalError::UnknownProc { ident: w.clone() }
-                })?)))
+                })?))
             }
-            Expr::Var(w) => {
-                Ok(Some(Expr::Val(env.lookup_var(&w).ok_or_else(|| {
-                    EvalError::UnknownVal { ident: w.clone() }
-                })?)))
-            }
-            Expr::List(list) => eval_list(list.as_slice(), env),
-            Expr::Proc(p) => Err(EvalError::NotEnoughInputs {
+            ExprKind::Var(w) => Some(ExprKind::Val(
+                env.lookup_var(&w)
+                    .ok_or_else(|| EvalError::UnknownVal { ident: w.clone() })?,
+            )),
+            ExprKind::List(list) => eval_list(list.as_slice(), env)?.map(|ex| ex.e),
+            ExprKind::Proc(p) => Err(EvalError::NotEnoughInputs {
                 proc: p.name.clone(),
-            }),
-            Expr::Op(op) => Err(EvalError::NotEnoughInputs {
+            })?,
+            ExprKind::Op(op) => Err(EvalError::NotEnoughInputs {
                 proc: op.name().to_owned(),
-            }),
-        }
+            })?,
+        };
+        let span = self.span;
+        Ok(e.map(|e| Expr { e, span }))
     }
 }
 
@@ -198,7 +251,7 @@ fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
                 return Ok(v);
             }
             (Some(v), false) => {
-                if let Some(Expr::Op(op)) = rest.first() {
+                if let Some(ExprKind::Op(op)) = rest.first().map(|v| &v.e) {
                     let (val, remainder) = eval_list_op(v.clone(), *op, &rest[1..], env)?;
                     if dbg!(remainder.is_empty()) {
                         return Ok(Some(val));
@@ -206,7 +259,6 @@ fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
                         return Err(EvalError::UnusedVal { val: v });
                     }
                 } else {
-                    // TODO: this is the right place to handle operators, I think
                     return Err(EvalError::UnusedVal { val: v });
                 }
             }
@@ -218,7 +270,7 @@ fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
 
 fn eval_list_op<'a>(
     mut lhs: Expr,
-    mut op: OpKind,
+    mut op: Op,
     mut list: &'a [Expr],
     env: &mut Env,
 ) -> Result<(Expr, &'a [Expr]), EvalError> {
@@ -229,7 +281,11 @@ fn eval_list_op<'a>(
         })?;
         lhs = op.eval(&lhs, &rhs)?;
 
-        if let Some(Expr::Op(next_op)) = list.first() {
+        if let Some(Expr {
+            e: ExprKind::Op(next_op),
+            ..
+        }) = list.first()
+        {
             op = *next_op;
             list = remainder;
         } else {
@@ -247,7 +303,10 @@ fn eval_list_once<'a>(
     let first = first.eval(env)?;
     match first {
         None => Ok((None, list)),
-        Some(Expr::Proc(p)) => {
+        Some(Expr {
+            e: ExprKind::Proc(p),
+            ..
+        }) => {
             let mut args = Vec::with_capacity(p.num_args);
             while args.len() < p.num_args {
                 if list.is_empty() {
@@ -265,7 +324,11 @@ fn eval_list_once<'a>(
             Ok((p.eval(&args, env)?, list))
         }
         Some(x) => {
-            if let Some(Expr::Op(op)) = list.first() {
+            if let Some(Expr {
+                e: ExprKind::Op(op),
+                ..
+            }) = list.first()
+            {
                 if op.priority() > priority {
                     let (val, remainder) = eval_list_op(x, *op, &list[1..], env)?;
                     Ok((Some(val), remainder))
@@ -283,28 +346,43 @@ fn eval_list_once<'a>(
 mod tests {
     use super::*;
 
+    fn num(x: f64) -> Expr {
+        Expr {
+            e: ExprKind::Val(Val::Num(x)),
+            span: Span { start: 0, end: 0 },
+        }
+    }
+
+    fn op(op: Op) -> Expr {
+        Expr {
+            e: ExprKind::Op(op),
+            span: Span { start: 0, end: 0 },
+        }
+    }
+
     #[test]
     fn arithmetic() {
-        let x = Expr::Val(Val::Num(42.0));
+        let x = num(42.0);
         let mut env = Env::default();
 
         assert_eq!(x.eval(&mut env).unwrap().unwrap(), x);
 
-        let y = Expr::Val(Val::Num(7.0));
-        let z = Expr::Val(Val::Num(2.0));
-        let plus = Expr::Op(OpKind::Add);
-        let times = Expr::Op(OpKind::Mul);
-        let expr = Expr::List(vec![x.clone(), plus.clone(), y.clone(), times, z.clone()]);
+        let y = num(7.0);
+        let z = num(2.0);
+        let plus = op(Op::Add);
+        let times = op(Op::Mul);
+        let expr = Expr {
+            e: ExprKind::List(vec![x.clone(), plus.clone(), y.clone(), times, z.clone()]),
+            span: Span { start: 0, end: 0 },
+        };
 
-        assert_eq!(
-            expr.eval(&mut env).unwrap().unwrap(),
-            Expr::Val(Val::Num(56.0))
-        );
+        assert_eq!(expr.eval(&mut env).unwrap().unwrap(), num(56.0));
 
-        let expr = Expr::List(vec![x, plus.clone(), y, plus, z]);
-        assert_eq!(
-            expr.eval(&mut env).unwrap().unwrap(),
-            Expr::Val(Val::Num(51.0))
-        );
+        let expr = Expr {
+            e: ExprKind::List(vec![x, plus.clone(), y, plus, z]),
+            span: Span { start: 0, end: 0 },
+        };
+
+        assert_eq!(expr.eval(&mut env).unwrap().unwrap(), num(51.0));
     }
 }

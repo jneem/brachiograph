@@ -14,8 +14,8 @@ use nom::{
     IResult, Parser,
 };
 
-mod parse;
-mod typ;
+pub mod parse;
+pub mod typ;
 
 /*
 pub type Span<'a> = nom_locate::LocatedSpan<&'a str>;
