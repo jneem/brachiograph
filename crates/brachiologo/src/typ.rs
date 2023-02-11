@@ -1,15 +1,44 @@
-pub type EvalResult = Result<Option<Expr>, EvalError>;
+use std::{collections::HashMap, rc::Rc};
 
-#[derive(Clone, Debug)]
-pub struct Token {
-    // TODO: logo does a very lazy kind of evaluation. You can write [+ 1 2] or [1 if 2] and it won't throw an error until evaluation time.
-    // So elements of a list are stored as raw "tokens" until evaluation time.
-}
+use crate::proc::Proc;
+
+pub type EvalResult = Result<Option<Expr>, EvalError>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+}
+
+#[derive(Clone)]
+pub struct ProcExpr {
+    pub inner: Rc<dyn Proc>,
+}
+
+impl std::fmt::Debug for ProcExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("proc")
+    }
+}
+
+impl PartialEq for ProcExpr {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl ProcExpr {
+    fn eval(&self, args: &[Expr], env: &mut Env) -> EvalResult {
+        self.inner.eval(args, env)
+    }
+
+    fn num_args(&self) -> usize {
+        self.inner.num_args()
+    }
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
 }
 
 impl Span {
@@ -114,7 +143,7 @@ pub enum ExprKind {
     Val(Val),
     Var(String),
     Word(String),
-    Proc(Proc), // TODO: reference equality?
+    Proc(ProcExpr),
     Op(Op),
     List(Vec<Expr>),
     Quote(Box<Expr>),
@@ -130,41 +159,100 @@ pub struct ProgState {
     // TODO
 }
 
-pub enum ProcBody {
-    User(Vec<Token>),
-    BuiltIn(/* TODO */),
+impl TryFrom<Expr> for f64 {
+    type Error = ();
+
+    fn try_from(value: Expr) -> Result<Self, ()> {
+        match value.e {
+            ExprKind::Val(Val::Num(x)) => Ok(x),
+            _ => Err(()),
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Proc {
-    name: String,
-    num_args: usize,
-    priority: Priority,
-    // TODO: body?
+impl TryFrom<Expr> for String {
+    type Error = ();
+
+    fn try_from(value: Expr) -> Result<Self, ()> {
+        match value.e {
+            ExprKind::Word(s) => Ok(s),
+            _ => Err(()),
+        }
+    }
 }
 
-impl Proc {
-    pub fn eval(&self, args: &[Expr], env: &mut Env) -> EvalResult {
-        todo!()
+#[derive(Debug, Clone, PartialEq)]
+pub enum TurtleCmd {
+    Forward(f64),
+    Back(f64),
+    Right(f64),
+    Left(f64),
+    PenUp,
+    PenDown,
+}
+
+pub struct Env {
+    // Invariant: this is always non-empty.
+    pub stack: Vec<Frame>,
+    pub turtle: Vec<TurtleCmd>,
+}
+
+impl Default for Env {
+    fn default() -> Self {
+        let mut ret = Env {
+            stack: vec![Frame::default()],
+            turtle: Vec::new(),
+        };
+        crate::proc::add_builtins(&mut ret);
+        ret
     }
 }
 
 #[derive(Default)]
-pub struct Env {
-    pub stack: Vec<Frame>,
-}
-
 pub struct Frame {
+    vars: HashMap<String, Expr>,
+    procs: HashMap<String, ProcExpr>,
     // TODO: local variables, etc
 }
 
 impl Env {
-    pub fn lookup_proc(&self, name: &str) -> Option<Proc> {
-        todo!()
+    pub fn lookup_proc(&self, name: &str) -> Option<ProcExpr> {
+        self.stack
+            .iter()
+            .find_map(|frame| frame.procs.get(name).cloned())
     }
 
-    pub fn lookup_var(&self, name: &str) -> Option<Val> {
-        todo!()
+    pub fn lookup_var(&self, name: &str) -> Option<Expr> {
+        self.stack
+            .iter()
+            .find_map(|frame| frame.vars.get(name).cloned())
+    }
+
+    pub fn scoped<U>(&mut self, f: impl FnOnce(&mut Env) -> U) -> U {
+        self.stack.push(Frame::default());
+        let res = f(self);
+        self.stack.pop();
+        res
+    }
+
+    pub fn def_var(&mut self, name: &str, val: Expr) {
+        self.stack
+            .last_mut()
+            .unwrap()
+            .vars
+            .insert(name.to_owned(), val);
+    }
+
+    pub fn def_proc(&mut self, proc: ProcExpr) {
+        self.stack
+            .last_mut()
+            .unwrap()
+            .procs
+            .insert(proc.name().to_owned(), proc);
+    }
+
+    pub fn turtle_do(&mut self, cmd: TurtleCmd) {
+        self.turtle.push(cmd);
     }
 }
 
@@ -202,7 +290,6 @@ pub enum EvalError {
 impl Expr {
     pub fn eval(&self, env: &mut Env) -> Result<Option<Expr>, EvalError> {
         let e = match &self.e {
-            // TODO: what does a word evaluate to?
             ExprKind::Val(_) => Some(self.e.clone()),
             ExprKind::Quote(v) => Some(ExprKind::clone(&v.e)),
             ExprKind::Word(w) => {
@@ -210,13 +297,14 @@ impl Expr {
                     EvalError::UnknownProc { ident: w.clone() }
                 })?))
             }
-            ExprKind::Var(w) => Some(ExprKind::Val(
+            ExprKind::Var(w) => Some(
                 env.lookup_var(&w)
-                    .ok_or_else(|| EvalError::UnknownVal { ident: w.clone() })?,
-            )),
+                    .ok_or_else(|| EvalError::UnknownVal { ident: w.clone() })?
+                    .e,
+            ),
             ExprKind::List(list) => eval_list(list.as_slice(), env)?.map(|ex| ex.e),
             ExprKind::Proc(p) => Err(EvalError::NotEnoughInputs {
-                proc: p.name.clone(),
+                proc: p.name().to_string(),
             })?,
             ExprKind::Op(op) => Err(EvalError::NotEnoughInputs {
                 proc: op.name().to_owned(),
@@ -330,17 +418,17 @@ fn eval_list_once<'a>(
             e: ExprKind::Proc(p),
             ..
         }) => {
-            let mut args = Vec::with_capacity(p.num_args);
-            while args.len() < p.num_args {
+            let mut args = Vec::with_capacity(p.num_args());
+            while args.len() < p.num_args() {
                 if list.is_empty() {
                     return Err(EvalError::NotEnoughInputs {
-                        proc: p.name.clone(),
+                        proc: p.name().to_string(),
                     });
                 }
                 let (arg, remainder) = eval_list_once(list, priority, env)?;
                 list = remainder;
                 let arg = arg.ok_or_else(|| EvalError::NoOutputTo {
-                    proc: p.name.clone(),
+                    proc: p.name().to_string(),
                 })?;
                 args.push(arg);
             }
