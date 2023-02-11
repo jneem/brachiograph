@@ -241,6 +241,15 @@ pub enum Priority {
     Mul,
 }
 
+/// Evaluate a list.
+///
+/// Logo is a bit weirder than lisp when it comes to evaluating a list. In lisp, the list `(f a b c)` is evaluated by
+/// first evaluating `a`, `b`, and `c`, and then applying `f` with the results of those evaluations. In logo, however, `f`
+/// is allowed to choose how many arguments it takes. For example, if `f` only wants a single argument then we first
+/// evaluate `a`, then apply `f` to the result of that. Then we have `(b c)` left over and we repeat (by evaluating `c`
+/// and applying `b` to the result of that).
+///
+/// If a function doesn't use up the whole list (like `f` in the example above) but it returns a value, that's an error.
 fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
     loop {
         // TODO: break on stop if we're in a procedure
@@ -268,6 +277,9 @@ fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
     }
 }
 
+/// Having already evaluated the left hand side of a binary operator, read the right hand side
+/// from a list and evaluate the operator. Returns the result of evaluating the operator, and also
+/// the remainder of the list.
 fn eval_list_op<'a>(
     mut lhs: Expr,
     mut op: Op,
@@ -294,8 +306,19 @@ fn eval_list_op<'a>(
     }
 }
 
+/// Evaluate the first part of a list.
+///
+/// With the documentation of [`eval_list`] for context, this function just evaluates the first part of a list,
+/// by evaluating one function and the arguments it wants. It returns the result of that evaluation and also
+/// the part of the list that didn't get evaluated yet.
+///
+/// `priority` is for handling binary operators: if our evaluation would finish just before a binary operator,
+/// and that operator has priority higher than `priority`, we evaluate that boolean operator.
+/// For example, if the list is `(2 * 3 a b c)` and our priority is `+`, then we'll evaluate `2 * 3` and return
+/// `(a b c)` as the remainder. But if our priority is `*` then we'll just evaluate `2` and return `(* 3 a b c)`
+/// as the remainder.
 fn eval_list_once<'a>(
-    mut list: &'a [Expr],
+    list: &'a [Expr],
     priority: Priority,
     env: &mut Env,
 ) -> Result<(Option<Expr>, &'a [Expr]), EvalError> {
