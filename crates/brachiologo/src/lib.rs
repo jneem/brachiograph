@@ -17,6 +17,8 @@ use nom::{
 pub mod parse;
 pub mod typ;
 
+pub use typ::{Env, EvalError, Expr};
+
 /*
 pub type Span<'a> = nom_locate::LocatedSpan<&'a str>;
 pub type ParseError<'a> = nom::error::Error<Span<'a>>;

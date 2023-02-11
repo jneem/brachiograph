@@ -229,7 +229,7 @@ impl Expr {
 
 // Operator precedence, with the loosest-binding ones first.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
-enum Priority {
+pub enum Priority {
     Stop,
     Output,
     Maybe,

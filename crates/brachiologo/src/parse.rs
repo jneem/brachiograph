@@ -83,5 +83,10 @@ pub fn quote(input: Span) -> IResult<Span, Expr> {
 }
 
 pub fn expr(input: Span) -> IResult<Span, Expr> {
+    // TODO: function def
     alt((num, op, list, quoted_list, quote, word, param))(input)
+}
+
+pub fn program(input: Span) -> IResult<Span, Expr> {
+    ws(bare_list)(input)
 }

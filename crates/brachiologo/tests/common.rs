@@ -1,7 +1,6 @@
-/*
 use std::path::Path;
 
-use brachiologo::BuiltIn;
+use brachiologo::{Env, EvalError, Expr};
 
 #[derive(Default, Clone)]
 pub struct TestCase {
@@ -9,14 +8,24 @@ pub struct TestCase {
     expected: String,
 }
 
-fn exec_one(s: &str) -> Result<Vec<BuiltIn>, brachiologo::Error> {
-    let (remaining, prog) = brachiologo::program(dbg!(s)).unwrap();
+fn exec_expr(s: &str) -> Result<Option<Expr>, EvalError> {
+    let (remaining, expr) = brachiologo::parse::expr(dbg!(s.trim().into())).unwrap();
+    assert!(remaining.is_empty());
+    let mut env = Env::default();
+    dbg!(expr).eval(&mut env)
+}
+
+/*
+fn exec_one(s: &str) -> Result<(), brachiologo::Error> {
+    let (remaining, prog) = brachiologo::parse::program(dbg!(s)).unwrap();
     assert!(remaining.is_empty());
     let mut scope = brachiologo::Scope::default();
     let mut builtins = Vec::new();
     scope.exec_block(&mut builtins, &prog)?;
-    Ok(builtins)
+    Ok(())
+    //Ok(builtins)
 }
+*/
 
 fn parse_loc(s: &str) -> (usize, u32, &str) {
     let mut split = s.trim().splitn(3, ' ');
@@ -27,6 +36,13 @@ fn parse_loc(s: &str) -> (usize, u32, &str) {
 }
 
 impl TestCase {
+    fn exec_expr(&self) {
+        let a = exec_expr(&self.input).unwrap();
+        let b = exec_expr(&self.expected).unwrap();
+        assert_eq!(a.map(|e| e.e), b.map(|e| e.e));
+    }
+
+    /*
     fn exec(&self) {
         let a = exec_one(&self.input).unwrap();
         let b = exec_one(&self.expected).unwrap();
@@ -42,6 +58,7 @@ impl TestCase {
             (spn.location_offset(), spn.location_line(), *spn.fragment())
         );
     }
+    */
 }
 
 pub fn read_tests(path: impl AsRef<Path>) -> Vec<TestCase> {
@@ -73,6 +90,15 @@ pub fn read_tests(path: impl AsRef<Path>) -> Vec<TestCase> {
     ret
 }
 
+#[test]
+fn test_exprs() {
+    let tests = read_tests("tests/expr.txt");
+    for test in tests {
+        test.exec_expr();
+    }
+}
+
+/*
 #[test]
 fn text_tests() {
     let tests = read_tests("tests/basic.txt");
