@@ -99,13 +99,13 @@ impl Op {
             return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: rhs.clone() });
         };
         let v = match self {
-            Op::Add => Val::Num(r + l),
-            Op::Sub => Val::Num(r - l),
-            Op::Mul => Val::Num(r * l),
-            Op::Div => Val::Num(r / l), // TODO: check for zero
-            Op::Eq => Val::Bool(r == l),
-            Op::Lt => Val::Bool(r < l),
-            Op::Gt => Val::Bool(r > l),
+            Op::Add => Val::Num(l + r),
+            Op::Sub => Val::Num(l - r),
+            Op::Mul => Val::Num(l * r),
+            Op::Div => Val::Num(l / r), // TODO: check for zero
+            Op::Eq => Val::Bool(l == r),
+            Op::Lt => Val::Bool(l < r),
+            Op::Gt => Val::Bool(l > r),
         };
         let span = lhs.span.union(rhs.span);
         Ok(Expr {
@@ -162,6 +162,17 @@ impl TryFrom<Expr> for f64 {
     fn try_from(value: Expr) -> Result<Self, ()> {
         match value.e {
             ExprKind::Val(Val::Num(x)) => Ok(x),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<Expr> for bool {
+    type Error = ();
+
+    fn try_from(value: Expr) -> Result<Self, ()> {
+        match value.e {
+            ExprKind::Val(Val::Bool(x)) => Ok(x),
             _ => Err(()),
         }
     }

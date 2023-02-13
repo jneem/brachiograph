@@ -212,4 +212,29 @@ pub fn add_builtins(env: &mut Env) {
     }));
     env.def_proc(fn_two("sum", |x: f64, y: f64, _env| x + y));
     env.def_proc(fn_two("prod", |x: f64, y: f64, _env| x * y));
+
+    env.def_proc(fn_two("if", |cond: bool, body: Expr, env| {
+        if dbg!(cond) {
+            dbg!(dbg!(body).eval(env))
+        } else {
+            Ok(None)
+        }
+    }));
+    env.def_proc(fn_two("repeat", |count: Expr, body: Expr, env| {
+        let ExprKind::Val(Val::Num(count_num)) = count.e.clone() else {
+                return Err(EvalError::BadArg { proc: "repeat".to_owned(), arg: count });
+            };
+        if count_num < 0.0 || count_num.trunc() != count_num {
+            return Err(EvalError::BadArg {
+                proc: "repeat".to_owned(),
+                arg: count,
+            });
+        }
+        for _ in 0..(count_num as u64) {
+            if let Some(res) = body.eval(env)? {
+                return Err(EvalError::UnusedVal { val: res });
+            }
+        }
+        Ok(None)
+    }));
 }
