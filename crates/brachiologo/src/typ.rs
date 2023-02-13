@@ -144,6 +144,7 @@ pub enum ExprKind {
     Var(String),
     Word(String),
     Proc(ProcExpr),
+    DefProc(ProcExpr),
     Op(Op),
     List(Vec<Expr>),
     Quote(Box<Expr>),
@@ -153,10 +154,6 @@ pub enum ExprKind {
 pub struct Expr {
     pub e: ExprKind,
     pub span: Span,
-}
-
-pub struct ProgState {
-    // TODO
 }
 
 impl TryFrom<Expr> for f64 {
@@ -212,7 +209,6 @@ impl Default for Env {
 pub struct Frame {
     vars: HashMap<String, Expr>,
     procs: HashMap<String, ProcExpr>,
-    // TODO: local variables, etc
 }
 
 impl Env {
@@ -268,10 +264,15 @@ impl std::fmt::Display for Expr {
     }
 }
 
+// TODO: figure out how to propagate spans in eval errors
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum EvalError {
-    #[error("Not enough inputs to {proc}")]
-    NotEnoughInputs { proc: String },
+    #[error("Not enough inputs to {proc} (got {got}, expected {expected})")]
+    NotEnoughInputs {
+        proc: String,
+        got: usize,
+        expected: usize,
+    },
     #[error("You don't say what to do with {val}")]
     UnusedVal { val: Expr },
     #[error("{ident} has no value")]
@@ -289,6 +290,7 @@ pub enum EvalError {
 
 impl Expr {
     pub fn eval(&self, env: &mut Env) -> Result<Option<Expr>, EvalError> {
+        dbg!(self);
         let e = match &self.e {
             ExprKind::Val(_) => Some(self.e.clone()),
             ExprKind::Quote(v) => Some(ExprKind::clone(&v.e)),
@@ -305,9 +307,17 @@ impl Expr {
             ExprKind::List(list) => eval_list(list.as_slice(), env)?.map(|ex| ex.e),
             ExprKind::Proc(p) => Err(EvalError::NotEnoughInputs {
                 proc: p.name().to_string(),
+                got: 0,
+                expected: p.num_args(),
             })?,
+            ExprKind::DefProc(p) => {
+                env.def_proc(p.clone());
+                None
+            }
             ExprKind::Op(op) => Err(EvalError::NotEnoughInputs {
                 proc: op.name().to_owned(),
+                got: 0,
+                expected: 2,
             })?,
         };
         let span = self.span;
@@ -378,6 +388,8 @@ fn eval_list_op<'a>(
         let (rhs, remainder) = eval_list_once(list, op.priority(), env)?;
         let rhs = rhs.ok_or_else(|| EvalError::NotEnoughInputs {
             proc: op.name().to_owned(),
+            got: 1,
+            expected: 2,
         })?;
         lhs = op.eval(&lhs, &rhs)?;
 
@@ -420,9 +432,12 @@ fn eval_list_once<'a>(
         }) => {
             let mut args = Vec::with_capacity(p.num_args());
             while args.len() < p.num_args() {
+                dbg!(&list);
                 if list.is_empty() {
                     return Err(EvalError::NotEnoughInputs {
                         proc: p.name().to_string(),
+                        got: args.len(),
+                        expected: p.num_args(),
                     });
                 }
                 let (arg, remainder) = eval_list_once(list, priority, env)?;

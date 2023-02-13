@@ -1,14 +1,18 @@
 use nom::{
     branch::alt,
-    character::complete::{alpha1, anychar, char, multispace0, multispace1},
+    bytes::complete::tag,
+    character::complete::{alpha1, anychar, char, line_ending, multispace0, multispace1, space0},
     combinator::{consumed, map, map_opt, verify},
-    multi::separated_list1,
+    multi::{many0, separated_list1},
     number::complete::double,
-    sequence::{delimited, preceded},
+    sequence::{delimited, preceded, tuple},
     IResult,
 };
 
-use crate::typ::{Expr, ExprKind, Op, Val};
+use crate::{
+    proc::UserProc,
+    typ::{Expr, ExprKind, Op, Val},
+};
 
 pub type Span<'a> = nom_locate::LocatedSpan<&'a str>;
 pub type ParseError<'a> = nom::error::Error<Span<'a>>;
@@ -18,6 +22,13 @@ where
     F: FnMut(Span<'a>) -> IResult<Span<'a>, O>,
 {
     delimited(multispace0, inner, multispace0)
+}
+
+fn ws_no_newline<'a, F: 'a, O>(inner: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O>
+where
+    F: FnMut(Span<'a>) -> IResult<Span<'a>, O>,
+{
+    delimited(space0, inner, space0)
 }
 
 fn with_span<'a, F: 'a>(inner: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Expr>
@@ -82,9 +93,34 @@ pub fn quote(input: Span) -> IResult<Span, Expr> {
     }))(input)
 }
 
+pub fn proc_def(input: Span) -> IResult<Span, Expr> {
+    with_span(map(
+        tuple((
+            tag("to"),
+            ws(word),
+            many0(ws_no_newline(param)),
+            line_ending,
+            ws(bare_list),
+            tag("end"),
+        )),
+        |(_to, name, args, _newline, body, _end)| {
+            let ExprKind::Word(name) = name.e else {
+                panic!("name should be a word");
+            };
+            let args: Vec<String> = args
+                .into_iter()
+                .map(|p| {
+                    let ExprKind::Var(p) = p.e else { panic!("param should be a var") };
+                    p
+                })
+                .collect();
+            ExprKind::DefProc(UserProc { name, args, body }.into())
+        },
+    ))(input)
+}
+
 pub fn expr(input: Span) -> IResult<Span, Expr> {
-    // TODO: function def
-    alt((num, op, list, quoted_list, quote, word, param))(input)
+    alt((proc_def, num, op, list, quoted_list, quote, word, param))(input)
 }
 
 pub fn program(input: Span) -> IResult<Span, Expr> {

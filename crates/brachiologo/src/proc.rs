@@ -12,6 +12,12 @@ pub struct UserProc {
     pub name: String,
 }
 
+impl From<UserProc> for ProcExpr {
+    fn from(p: UserProc) -> Self {
+        ProcExpr { inner: Rc::new(p) }
+    }
+}
+
 impl Proc for UserProc {
     fn eval(&self, args: &[Expr], env: &mut Env) -> EvalResult {
         assert_eq!(args.len(), self.args.len());
