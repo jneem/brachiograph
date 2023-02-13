@@ -92,26 +92,23 @@ impl Op {
     }
 
     pub fn eval(&self, lhs: &Expr, rhs: &Expr) -> Result<Expr, EvalError> {
-        let ExprKind::Val(Val::Num(l)) = lhs.e else {
+        let ExprKind::Num(l) = lhs.e else {
             return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: lhs.clone() });
         };
-        let ExprKind::Val(Val::Num(r)) = rhs.e else {
+        let ExprKind::Num(r) = rhs.e else {
             return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: rhs.clone() });
         };
-        let v = match self {
-            Op::Add => Val::Num(l + r),
-            Op::Sub => Val::Num(l - r),
-            Op::Mul => Val::Num(l * r),
-            Op::Div => Val::Num(l / r), // TODO: check for zero
-            Op::Eq => Val::Bool(l == r),
-            Op::Lt => Val::Bool(l < r),
-            Op::Gt => Val::Bool(l > r),
+        let e = match self {
+            Op::Add => ExprKind::Num(l + r),
+            Op::Sub => ExprKind::Num(l - r),
+            Op::Mul => ExprKind::Num(l * r),
+            Op::Div => ExprKind::Num(l / r), // TODO: check for zero
+            Op::Eq => ExprKind::Bool(l == r),
+            Op::Lt => ExprKind::Bool(l < r),
+            Op::Gt => ExprKind::Bool(l > r),
         };
         let span = lhs.span.union(rhs.span);
-        Ok(Expr {
-            e: ExprKind::Val(v),
-            span,
-        })
+        Ok(Expr { e, span })
     }
 }
 
@@ -133,14 +130,9 @@ impl TryFrom<char> for Op {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Val {
+pub enum ExprKind {
     Num(f64),
     Bool(bool),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ExprKind {
-    Val(Val),
     Var(String),
     Word(String),
     Proc(ProcExpr),
@@ -161,7 +153,7 @@ impl TryFrom<Expr> for f64 {
 
     fn try_from(value: Expr) -> Result<Self, ()> {
         match value.e {
-            ExprKind::Val(Val::Num(x)) => Ok(x),
+            ExprKind::Num(x) => Ok(x),
             _ => Err(()),
         }
     }
@@ -172,7 +164,7 @@ impl TryFrom<Expr> for bool {
 
     fn try_from(value: Expr) -> Result<Self, ()> {
         match value.e {
-            ExprKind::Val(Val::Bool(x)) => Ok(x),
+            ExprKind::Bool(x) => Ok(x),
             _ => Err(()),
         }
     }
@@ -263,12 +255,6 @@ impl Env {
     }
 }
 
-impl std::fmt::Display for Val {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         todo!()
@@ -301,9 +287,9 @@ pub enum EvalError {
 
 impl Expr {
     pub fn eval(&self, env: &mut Env) -> Result<Option<Expr>, EvalError> {
-        dbg!(self);
         let e = match &self.e {
-            ExprKind::Val(_) => Some(self.e.clone()),
+            ExprKind::Num(_) => Some(self.e.clone()),
+            ExprKind::Bool(_) => Some(self.e.clone()),
             ExprKind::Quote(v) => Some(ExprKind::clone(&v.e)),
             ExprKind::Word(w) => {
                 Some(ExprKind::Proc(env.lookup_proc(&w).ok_or_else(|| {
@@ -485,7 +471,7 @@ mod tests {
 
     fn num(x: f64) -> Expr {
         Expr {
-            e: ExprKind::Val(Val::Num(x)),
+            e: ExprKind::Num(x),
             span: Span { start: 0, end: 0 },
         }
     }

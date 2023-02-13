@@ -11,7 +11,7 @@ use nom::{
 
 use crate::{
     proc::UserProc,
-    typ::{Expr, ExprKind, Op, Val},
+    typ::{Expr, ExprKind, Op},
 };
 
 pub type Span<'a> = nom_locate::LocatedSpan<&'a str>;
@@ -58,7 +58,7 @@ pub fn param(input: Span) -> IResult<Span, Expr> {
 }
 
 pub fn num(input: Span) -> IResult<Span, Expr> {
-    with_span(map(double, |x| ExprKind::Val(Val::Num(x))))(input)
+    with_span(map(double, |x| ExprKind::Num(x)))(input)
 }
 
 pub fn op(input: Span) -> IResult<Span, Expr> {

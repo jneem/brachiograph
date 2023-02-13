@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
-    typ::{EvalResult, ExprKind, ProcExpr, Span, TurtleCmd, Val},
+    typ::{EvalResult, ExprKind, ProcExpr, Span, TurtleCmd},
     Env, EvalError, Expr,
 };
 
@@ -143,7 +143,7 @@ impl IntoEvalResult for EvalResult {
 impl IntoEvalResult for f64 {
     fn into_eval_result(self) -> EvalResult {
         Ok(Some(Expr {
-            e: ExprKind::Val(Val::Num(self)),
+            e: ExprKind::Num(self),
             // TODO: how to handle missing spans in a principled way?
             span: Span { start: 0, end: 0 },
         }))
@@ -221,7 +221,7 @@ pub fn add_builtins(env: &mut Env) {
         }
     }));
     env.def_proc(fn_two("repeat", |count: Expr, body: Expr, env| {
-        let ExprKind::Val(Val::Num(count_num)) = count.e.clone() else {
+        let ExprKind::Num(count_num) = count.e.clone() else {
                 return Err(EvalError::BadArg { proc: "repeat".to_owned(), arg: count });
             };
         if count_num < 0.0 || count_num.trunc() != count_num {
