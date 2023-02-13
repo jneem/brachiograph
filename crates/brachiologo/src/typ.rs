@@ -93,10 +93,10 @@ impl Op {
 
     pub fn eval(&self, lhs: &Expr, rhs: &Expr) -> Result<Expr, EvalError> {
         let ExprKind::Num(l) = lhs.e else {
-            return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: lhs.clone() });
+            return Err(EvalError::BadOpArg { op: self.clone(), arg: lhs.clone() });
         };
         let ExprKind::Num(r) = rhs.e else {
-            return Err(EvalError::BadArg { proc: self.name().to_owned(), arg: rhs.clone() });
+            return Err(EvalError::BadOpArg { op: self.clone(), arg: rhs.clone() });
         };
         let e = match self {
             Op::Add => ExprKind::Num(l + r),
@@ -257,29 +257,52 @@ impl Env {
 
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        match &self.e {
+            ExprKind::Num(x) => x.fmt(f),
+            ExprKind::Bool(x) => x.fmt(f),
+            ExprKind::Var(s) => f.write_fmt(format_args!(":{}", s)),
+            ExprKind::Word(w) => w.fmt(f),
+            ExprKind::Proc(p) => p.name().fmt(f),
+            ExprKind::DefProc(p) => f.write_fmt(format_args!("to {} .. end", p.name())),
+            ExprKind::Op(op) => op.name().fmt(f),
+            ExprKind::List(list) => {
+                f.write_str("(")?;
+                for (i, e) in list.iter().enumerate() {
+                    e.fmt(f)?;
+                    if i < list.len() {
+                        f.write_str(" ")?;
+                    }
+                }
+                f.write_str(")")
+            }
+            ExprKind::Quote(e) => f.write_fmt(format_args!("\"{}", e)),
+        }
     }
 }
 
-// TODO: figure out how to propagate spans in eval errors
+// TODO: improve the context of errors. Maybe have them chain? So for example a BadArg error will
+// capture the arg that was bad, but the one level higher we'll also capture the procedure whose evaluation
+// complained about the arg...
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum EvalError {
-    #[error("Not enough inputs to {proc} (got {got}, expected {expected})")]
-    NotEnoughInputs {
-        proc: String,
-        got: usize,
-        expected: usize,
-    },
+    #[error("Not enough inputs to {} (got {}, expected {})", .proc.name(), .args.len(), .proc.num_args())]
+    NotEnoughInputs { proc: ProcExpr, args: Vec<Expr> },
+    #[error("Missing input to {op}")]
+    MissingOpInput { op: Expr },
     #[error("You don't say what to do with {val}")]
     UnusedVal { val: Expr },
     #[error("{ident} has no value")]
-    UnknownVal { ident: String },
+    UnknownVal { ident: Expr },
     #[error("I don't know how to {ident}")]
-    UnknownProc { ident: String },
+    UnknownProc { ident: Expr },
     #[error("didn't output to {proc}")]
     NoOutputTo { proc: String },
+    // TODO: location info
     #[error("{proc} doesn't like {arg} as input")]
     BadArg { proc: String, arg: Expr },
+    // TODO: op doesn't have location info
+    #[error("{} doesn't like {arg} as input", .op.name())]
+    BadOpArg { op: Op, arg: Expr },
     // TODO: How does ucblogo handle empty lists?
     #[error("I can't eval an empty list")]
     EmptyList,
@@ -291,31 +314,28 @@ impl Expr {
             ExprKind::Num(_) => Some(self.e.clone()),
             ExprKind::Bool(_) => Some(self.e.clone()),
             ExprKind::Quote(v) => Some(ExprKind::clone(&v.e)),
-            ExprKind::Word(w) => {
-                Some(ExprKind::Proc(env.lookup_proc(&w).ok_or_else(|| {
-                    EvalError::UnknownProc { ident: w.clone() }
-                })?))
-            }
+            ExprKind::Word(w) => Some(ExprKind::Proc(env.lookup_proc(&w).ok_or_else(|| {
+                EvalError::UnknownProc {
+                    ident: self.clone(),
+                }
+            })?)),
             ExprKind::Var(w) => Some(
                 env.lookup_var(&w)
-                    .ok_or_else(|| EvalError::UnknownVal { ident: w.clone() })?
+                    .ok_or_else(|| EvalError::UnknownVal {
+                        ident: self.clone(),
+                    })?
                     .e,
             ),
             ExprKind::List(list) => eval_list(list.as_slice(), env)?.map(|ex| ex.e),
             ExprKind::Proc(p) => Err(EvalError::NotEnoughInputs {
-                proc: p.name().to_string(),
-                got: 0,
-                expected: p.num_args(),
+                proc: p.clone(),
+                args: vec![],
             })?,
             ExprKind::DefProc(p) => {
                 env.def_proc(p.clone());
                 None
             }
-            ExprKind::Op(op) => Err(EvalError::NotEnoughInputs {
-                proc: op.name().to_owned(),
-                got: 0,
-                expected: 2,
-            })?,
+            ExprKind::Op(_) => Err(EvalError::MissingOpInput { op: self.clone() })?,
         };
         let span = self.span;
         Ok(e.map(|e| Expr { e, span }))
@@ -355,8 +375,14 @@ fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
                 return Ok(v);
             }
             (Some(v), false) => {
-                if let Some(ExprKind::Op(op)) = rest.first().map(|v| &v.e) {
-                    let (val, remainder) = eval_list_op(v.clone(), *op, &rest[1..], env)?;
+                if let Some(
+                    op_expr @ Expr {
+                        e: ExprKind::Op(op),
+                        ..
+                    },
+                ) = rest.first()
+                {
+                    let (val, remainder) = eval_list_op(v.clone(), *op, op_expr, &rest[1..], env)?;
                     if dbg!(remainder.is_empty()) {
                         return Ok(Some(val));
                     } else {
@@ -378,15 +404,14 @@ fn eval_list(mut list: &[Expr], env: &mut Env) -> EvalResult {
 fn eval_list_op<'a>(
     mut lhs: Expr,
     mut op: Op,
+    op_expr: &Expr,
     mut list: &'a [Expr],
     env: &mut Env,
 ) -> Result<(Expr, &'a [Expr]), EvalError> {
     loop {
         let (rhs, remainder) = eval_list_once(list, op.priority(), env)?;
-        let rhs = rhs.ok_or_else(|| EvalError::NotEnoughInputs {
-            proc: op.name().to_owned(),
-            got: 1,
-            expected: 2,
+        let rhs = rhs.ok_or_else(|| EvalError::MissingOpInput {
+            op: op_expr.clone(),
         })?;
         lhs = op.eval(&lhs, &rhs)?;
 
@@ -432,9 +457,8 @@ fn eval_list_once<'a>(
                 dbg!(&list);
                 if list.is_empty() {
                     return Err(EvalError::NotEnoughInputs {
-                        proc: p.name().to_string(),
-                        got: args.len(),
-                        expected: p.num_args(),
+                        proc: p.clone(),
+                        args,
                     });
                 }
                 let (arg, remainder) = eval_list_once(list, priority, env)?;
@@ -447,13 +471,15 @@ fn eval_list_once<'a>(
             Ok((p.eval(&args, env)?, list))
         }
         Some(x) => {
-            if let Some(Expr {
-                e: ExprKind::Op(op),
-                ..
-            }) = list.first()
+            if let Some(
+                op_expr @ Expr {
+                    e: ExprKind::Op(op),
+                    ..
+                },
+            ) = list.first()
             {
                 if op.priority() > priority {
-                    let (val, remainder) = eval_list_op(x, *op, &list[1..], env)?;
+                    let (val, remainder) = eval_list_op(x, *op, op_expr, &list[1..], env)?;
                     Ok((Some(val), remainder))
                 } else {
                     Ok((Some(x), list))
