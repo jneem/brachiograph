@@ -303,6 +303,8 @@ pub enum EvalError {
     // TODO: op doesn't have location info
     #[error("{} doesn't like {arg} as input", .op.name())]
     BadOpArg { op: Op, arg: Expr },
+    #[error("error {err} when evaluating {proc}")]
+    Backtrace { err: Box<EvalError>, proc: Expr },
     // TODO: How does ucblogo handle empty lists?
     #[error("I can't eval an empty list")]
     EmptyList,
@@ -448,13 +450,14 @@ fn eval_list_once<'a>(
     let first = first.eval(env)?;
     match first {
         None => Ok((None, list)),
-        Some(Expr {
-            e: ExprKind::Proc(p),
-            ..
-        }) => {
+        Some(
+            ref proc_expr @ Expr {
+                e: ExprKind::Proc(ref p),
+                ..
+            },
+        ) => {
             let mut args = Vec::with_capacity(p.num_args());
             while args.len() < p.num_args() {
-                dbg!(&list);
                 if list.is_empty() {
                     return Err(EvalError::NotEnoughInputs {
                         proc: p.clone(),
@@ -468,7 +471,13 @@ fn eval_list_once<'a>(
                 })?;
                 args.push(arg);
             }
-            Ok((p.eval(&args, env)?, list))
+            Ok((
+                p.eval(&args, env).map_err(|err| EvalError::Backtrace {
+                    proc: proc_expr.clone(),
+                    err: Box::new(err),
+                })?,
+                list,
+            ))
         }
         Some(x) => {
             if let Some(
