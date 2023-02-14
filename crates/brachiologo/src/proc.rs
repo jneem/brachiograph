@@ -204,6 +204,10 @@ pub fn add_builtins(env: &mut Env) {
     env.def_proc(fn_one("back", |x, env| env.turtle_do(TurtleCmd::Back(x))));
     env.def_proc(fn_one("bk", |x, env| env.turtle_do(TurtleCmd::Back(x))));
 
+    env.def_proc(fn_one("print", |x: Expr, env| {
+        let _ = writeln!(&mut env.out, "{}", x);
+    }));
+
     env.def_proc(fn_zero("penup", |env| env.turtle_do(TurtleCmd::PenUp)));
     env.def_proc(fn_zero("pendown", |env| env.turtle_do(TurtleCmd::PenDown)));
 

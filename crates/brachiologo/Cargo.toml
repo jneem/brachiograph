@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/jneem/brachiograph"
 
 [dependencies]
+clap = { version = "4.1.4", features = ["derive"] }
 nom = "7.1.2"
 nom_locate = "4.0.0"
 thiserror = "1.0.38"

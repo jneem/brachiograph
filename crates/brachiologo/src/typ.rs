@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, io::Write, rc::Rc};
 
 use crate::proc::Proc;
 
@@ -195,6 +195,7 @@ pub struct Env {
     // Invariant: this is always non-empty.
     pub stack: Vec<Frame>,
     pub turtle: Vec<TurtleCmd>,
+    pub out: Box<dyn Write>,
 }
 
 impl Default for Env {
@@ -202,6 +203,7 @@ impl Default for Env {
         let mut ret = Env {
             stack: vec![Frame::default()],
             turtle: Vec::new(),
+            out: Box::new(std::io::stdout()),
         };
         crate::proc::add_builtins(&mut ret);
         ret
