@@ -1,6 +1,6 @@
 // TODO: draw a diagram
 
-use crate::{Angle, Fixed};
+use crate::{Angle, Angles, Fixed};
 
 use cordic::{asin, atan, sqrt};
 use fixed::traits::ToFixed;
@@ -27,13 +27,6 @@ impl Default for Config {
             y_range: (5.to_fixed(), 13.to_fixed()),
         }
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-#[cfg_attr(target_os = "none", derive(defmt::Format))]
-pub struct State {
-    pub shoulder: Angle,
-    pub elbow: Angle,
 }
 
 impl Config {
@@ -126,13 +119,13 @@ impl Config {
     }
 
     // TODO: error type
-    pub fn at_coord(&self, x: impl ToFixed, y: impl ToFixed) -> Result<State, ()> {
+    pub fn at_coord(&self, x: impl ToFixed, y: impl ToFixed) -> Result<Angles, ()> {
         let x: Fixed = x.to_fixed();
         let y: Fixed = y.to_fixed();
         self.at_coord_impl(x, y)
     }
 
-    fn at_coord_impl(&self, x: Fixed, y: Fixed) -> Result<State, ()> {
+    fn at_coord_impl(&self, x: Fixed, y: Fixed) -> Result<Angles, ()> {
         if x < self.x_range.0 || x > self.x_range.1 || y < self.y_range.0 || y > self.y_range.1 {
             return Err(());
         }
@@ -165,7 +158,7 @@ impl Config {
         let shoulder_rads = Fixed::FRAC_PI_2 + Fixed::FRAC_PI_4 - theta + elbow_rads / 2;
         let shoulder = Angle::from_radians(shoulder_rads);
 
-        Ok(State { elbow, shoulder })
+        Ok(Angles { elbow, shoulder })
     }
 }
 
@@ -174,7 +167,7 @@ mod tests {
     use fixed::traits::ToFixed;
 
     use super::*;
-    fn assert_approx(geom: &State, shoulder: impl ToFixed, elbow: impl ToFixed) {
+    fn assert_approx(geom: &crate::Angles, shoulder: impl ToFixed, elbow: impl ToFixed) {
         let shoulder: Fixed = shoulder.to_fixed();
         let elbow: Fixed = elbow.to_fixed();
         assert!((geom.shoulder.degrees() - shoulder).abs() < 0.1);

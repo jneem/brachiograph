@@ -1,4 +1,4 @@
-static SHOULDER_INC: &'static [(i16, u16)] = &[
+static SHOULDER_INC: &[(i16, u16)] = &[
     (-45, 2509),
     (-30, 2321),
     (-15, 2115),
@@ -12,7 +12,7 @@ static SHOULDER_INC: &'static [(i16, u16)] = &[
     (105, 878),
     (120, 735),
 ];
-static SHOULDER_DEC: &'static [(i16, u16)] = &[
+static SHOULDER_DEC: &[(i16, u16)] = &[
     (-45, 2509),
     (-30, 2287),
     (-15, 2118),
@@ -26,7 +26,7 @@ static SHOULDER_DEC: &'static [(i16, u16)] = &[
     (105, 888),
     (120, 736),
 ];
-static ELBOW_INC: &'static [(i16, u16)] = &[
+static ELBOW_INC: &[(i16, u16)] = &[
     (-60, 2182),
     (-45, 2008),
     (-30, 1844),
@@ -38,7 +38,7 @@ static ELBOW_INC: &'static [(i16, u16)] = &[
     (60, 988),
     (75, 853),
 ];
-static ELBOW_DEC: &'static [(i16, u16)] = &[
+static ELBOW_DEC: &[(i16, u16)] = &[
     (-60, 2182),
     (-45, 1985),
     (-30, 1817),

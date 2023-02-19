@@ -1,13 +1,30 @@
 use arrayvec::ArrayVec;
-use fixed_macro::fixed;
 
-use crate::{Angle, Fixed};
+use crate::{Angle, Fixed, PenState};
 
 type Frac = fixed::types::U0F16;
+
+#[derive(Debug, Clone)]
+pub struct Calibration {
+    pub shoulder: Pwm,
+    pub elbow: Pwm,
+    pub pen: TogglePwm,
+}
+
+impl Default for Calibration {
+    fn default() -> Self {
+        Self {
+            shoulder: Pwm::shoulder(),
+            elbow: Pwm::elbow(),
+            pen: TogglePwm::pen(),
+        }
+    }
+}
 
 // A pair of (degrees, pulse-width-modulation-in-microseconds)
 pub type CalibrationEntry = (i16, u16);
 
+#[derive(Debug, Clone)]
 pub struct Pwm {
     // Calibrations to use when the angle is increasing.
     pub inc: ArrayVec<CalibrationEntry, 16>,
@@ -15,12 +32,12 @@ pub struct Pwm {
     pub dec: ArrayVec<CalibrationEntry, 16>,
 }
 
+#[derive(Debug, Clone)]
 pub struct TogglePwm {
-    pub on: Frac,
-    pub off: Frac,
+    pub on: u16,
+    pub off: u16,
 }
 
-// TODO: non-trivial calibration, including hysterisis
 impl Pwm {
     pub fn shoulder() -> Pwm {
         Pwm {
@@ -60,9 +77,13 @@ impl Pwm {
 
 impl TogglePwm {
     pub fn pen() -> TogglePwm {
-        TogglePwm {
-            off: fixed!(0.075: U0F16),
-            on: fixed!(0.125: U0F16),
+        TogglePwm { off: 750, on: 1250 }
+    }
+
+    pub fn duty(&self, state: PenState) -> u16 {
+        match state {
+            PenState::Up => self.off,
+            PenState::Down => self.on,
         }
     }
 }

@@ -3,7 +3,7 @@
 
 use brachiograph_runner as _;
 
-use brachiograph::{geom, Angle, SlowOp};
+use brachiograph::{ServoPosition, SlowOp};
 use ringbuffer::{
     ConstGenericRingBuffer as RingBuffer, RingBuffer as _, RingBufferExt, RingBufferWrite,
 };
@@ -11,7 +11,6 @@ use stm32f1xx_hal::{device::TIM3, timer::PwmChannel};
 
 const TICK_HZ: u32 = 100;
 
-type Fixed = fixed::types::I20F12;
 type Duration = fugit::TimerDurationU64<TICK_HZ>;
 
 #[derive(Default)]
@@ -24,14 +23,14 @@ pub struct OpQueue {
 
 include!("../calibration_data.rs");
 
-fn shoulder_config() -> brachiograph::pwm::Pwm {
+fn default_shoulder_config() -> brachiograph::pwm::Pwm {
     brachiograph::pwm::Pwm {
         inc: SHOULDER_INC.iter().copied().collect(),
         dec: SHOULDER_DEC.iter().copied().collect(),
     }
 }
 
-fn elbow_config() -> brachiograph::pwm::Pwm {
+fn default_elbow_config() -> brachiograph::pwm::Pwm {
     brachiograph::pwm::Pwm {
         inc: ELBOW_INC.iter().copied().collect(),
         dec: ELBOW_DEC.iter().copied().collect(),
@@ -53,36 +52,10 @@ impl OpQueue {
     }
 }
 
-fn get_max_duty<const C: u8>(pwm: &PwmChannel<TIM3, C>) -> Fixed {
-    let max = pwm.get_max_duty();
-    // 2.5% duty means 0 degrees, 12.5% means 180 degrees, and everything else is linearly interpolated.
-    // max duty of zero means max duty of 2^16.
-    if max == 0 {
-        Fixed::from_num(1i32 << 16)
-    } else {
-        Fixed::from_num(max)
-    }
-}
-
-fn set_angle<const C: u8>(
-    pwm: &mut PwmChannel<TIM3, C>,
-    cfg: &brachiograph::pwm::Pwm,
-    last_angle: Angle,
-    angle: Angle,
-) {
-    let duty = cfg.duty(last_angle, angle).unwrap(); // FIXME: unwrap
-    pwm.set_duty(duty);
-}
-
 pub struct Pwms {
     shoulder: PwmChannel<TIM3, 0>,
     elbow: PwmChannel<TIM3, 1>,
     pen: PwmChannel<TIM3, 2>,
-    cur_shoulder: Angle,
-    cur_elbow: Angle,
-    shoulder_cfg: brachiograph::pwm::Pwm,
-    elbow_cfg: brachiograph::pwm::Pwm,
-    pen_cfg: brachiograph::pwm::TogglePwm,
 }
 
 impl Pwms {
@@ -90,53 +63,32 @@ impl Pwms {
         shoulder: PwmChannel<TIM3, 0>,
         elbow: PwmChannel<TIM3, 1>,
         pen: PwmChannel<TIM3, 2>,
-        init_angles: &geom::State,
+        pos: ServoPosition,
     ) -> Pwms {
-        let shoulder_cfg = shoulder_config();
-        let elbow_cfg = elbow_config();
-        let pen_cfg = brachiograph::pwm::TogglePwm::pen();
         let mut pwms = Pwms {
             shoulder,
             elbow,
             pen,
-            cur_shoulder: init_angles.shoulder,
-            cur_elbow: init_angles.elbow,
-            shoulder_cfg,
-            elbow_cfg,
-            pen_cfg,
         };
-        pwms.set_shoulder(init_angles.shoulder);
-        pwms.set_elbow(init_angles.elbow);
-        pwms.pen_down(false);
+        pwms.set_shoulder(pos.shoulder);
+        pwms.set_elbow(pos.elbow);
+        pwms.set_pen(pos.pen);
         pwms.shoulder.enable();
         pwms.elbow.enable();
         pwms.pen.enable();
         pwms
     }
 
-    pub fn set_shoulder(&mut self, angle: Angle) {
-        set_angle(
-            &mut self.shoulder,
-            &self.shoulder_cfg,
-            self.cur_shoulder,
-            angle,
-        );
-        self.cur_shoulder = angle;
+    pub fn set_shoulder(&mut self, duty: u16) {
+        self.shoulder.set_duty(duty);
     }
 
-    pub fn set_elbow(&mut self, angle: Angle) {
-        set_angle(&mut self.elbow, &self.elbow_cfg, self.cur_elbow, angle);
-        self.cur_elbow = angle;
+    pub fn set_elbow(&mut self, duty: u16) {
+        self.elbow.set_duty(duty);
     }
 
-    pub fn pen_down(&mut self, down: bool) {
-        let duty_ratio = Fixed::from_num(if down {
-            self.pen_cfg.on
-        } else {
-            self.pen_cfg.off
-        });
-        let duty = get_max_duty(&self.pen) * duty_ratio;
-        self.pen.set_duty(duty.to_num());
+    pub fn set_pen(&mut self, duty: u16) {
+        self.pen.set_duty(duty);
     }
 }
 
@@ -146,7 +98,7 @@ mod app {
     use brachiograph::{geom, Brachiograph, FastOp, Op, Resp, SlowOp};
     use brachiograph_runner::serial::UsbSerial;
     use cortex_m::asm;
-    use ringbuffer::RingBufferRead;
+    use ringbuffer::{RingBufferExt, RingBufferRead};
     use stm32f1xx_hal::{
         prelude::*,
         usb::{Peripheral, UsbBus, UsbBusType},
@@ -163,12 +115,12 @@ mod app {
         serial: UsbSerial,
         op_queue: OpQueue,
         state: Brachiograph,
+        pwms: Pwms,
         _led: stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Output>,
     }
 
     #[local]
     struct Local {
-        pwms: Pwms,
         geom_config: geom::Config,
     }
 
@@ -233,9 +185,10 @@ mod app {
             )
             .split();
 
-        let state = Brachiograph::new(-8, 8);
+        let mut state = Brachiograph::new(-8, 8);
         let geom_config = state.config().clone();
-        let pwms = Pwms::init(shoulder, elbow, pen, &state.angles());
+        let now = fugit::Instant::<u64, 1, 1_000_000>::from_ticks(0);
+        let pwms = Pwms::init(shoulder, elbow, pen, state.update(now));
         tick::spawn_after(Duration::millis(20)).unwrap();
 
         (
@@ -244,8 +197,9 @@ mod app {
                 _led: led,
                 state,
                 op_queue: OpQueue::default(),
+                pwms,
             },
-            Local { pwms, geom_config },
+            Local { geom_config },
             init::Monotonics(mono),
         )
     }
@@ -265,13 +219,18 @@ mod app {
         }
     }
 
-    fn handle_fast_op(op_queue: &mut OpQueue, serial: &mut UsbSerial, op: &FastOp) {
+    fn handle_fast_op(
+        op_queue: &mut OpQueue,
+        state: &mut Brachiograph,
+        serial: &mut UsbSerial,
+        op: FastOp,
+    ) {
         match op {
             FastOp::Cancel => {
                 op_queue.clear();
                 let _ = serial.send(Resp::Ack);
             }
-            FastOp::Calibrate(_, _, _) => todo!(),
+            FastOp::Calibrate(joint, dir, calib) => state.change_calibration(joint, dir, calib),
         }
     }
 
@@ -279,14 +238,15 @@ mod app {
     fn usb_rx0(cx: usb_rx0::Context) {
         let mut serial = cx.shared.serial;
         let mut op_queue = cx.shared.op_queue;
+        let mut state = cx.shared.state;
         let geom_config = cx.local.geom_config;
-        (&mut serial, &mut op_queue).lock(|serial, op_queue| {
+        (&mut serial, &mut op_queue, &mut state).lock(|serial, op_queue, state| {
             if !serial.poll() {
                 return;
             }
             while let Some(op) = serial.read() {
                 match op {
-                    Op::Fast(op) => handle_fast_op(op_queue, serial, &op),
+                    Op::Fast(op) => handle_fast_op(op_queue, state, serial, op),
                     Op::Slow(op) => {
                         if validate_slow_op(geom_config, &op) {
                             if op_queue.enqueue(op).is_err() {
@@ -306,43 +266,53 @@ mod app {
         })
     }
 
-    #[task(priority = 1, shared = [op_queue, state], local = [pwms])]
+    #[task(priority = 1, shared = [op_queue, state, pwms])]
     fn tick(cx: tick::Context) {
         let mut op_queue = cx.shared.op_queue;
         let mut state = cx.shared.state;
-        let pwms = cx.local.pwms;
-        (&mut op_queue, &mut state).lock(|op_queue, state| {
+        let mut pwms = cx.shared.pwms;
+        (&mut op_queue, &mut state, &mut pwms).lock(|op_queue, state, pwms| {
             let now = monotonics::now();
             // TODO: no better way to convert instants??
             let geom_now = fugit::Instant::<u64, 1, 1_000_000>::from_ticks(0)
                 + now.duration_since_epoch().convert();
-            let (geom, pen_down) = state.update(geom_now);
+            let servos = state.update(geom_now);
 
-            pwms.set_shoulder(geom.shoulder);
-            pwms.set_elbow(geom.elbow);
-            pwms.pen_down(pen_down);
+            pwms.set_shoulder(servos.shoulder);
+            pwms.set_elbow(servos.elbow);
+            pwms.set_pen(servos.pen);
 
-            if let Some(mut resting) = state.resting() {
-                if let Some(op) = op_queue.queue.dequeue() {
+            if let Some(resting) = state.resting() {
+                if let Some(op) = op_queue.queue.peek() {
                     match op {
                         SlowOp::PenUp => {
                             resting.pen_up(geom_now);
+                            op_queue.queue.dequeue();
                         }
                         SlowOp::PenDown => {
                             resting.pen_down(geom_now);
+                            op_queue.queue.dequeue();
                         }
                         SlowOp::MoveTo(point) => {
                             // TODO: error handling
                             if resting.move_to(geom_now, point.x, point.y).is_err() {
                                 defmt::println!("failed to move");
                             }
+                            op_queue.queue.dequeue();
                         }
                         SlowOp::ChangePosition(_delta) => {
-                            // TODO: add a "calibration mode" state to the brachiograph
+                            // TODO: error handling
+                            defmt::println!("must be in calibration mode");
                         }
                     }
                 }
+            } else if let Some(calibrating) = state.calibrating() {
+                if let Some(SlowOp::ChangePosition(delta)) = op_queue.queue.peek() {
+                    calibrating.delta(*delta);
+                    op_queue.queue.dequeue();
+                }
             }
+
             // TODO: can we have it idle if there's nothing to do? I haven't figured out how to
             // re-wake it if necessary, since `tick::spawn` panics if `tick` is already running
             // and I don't know how to *check* if it's running.
