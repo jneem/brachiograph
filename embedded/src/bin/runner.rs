@@ -21,22 +21,6 @@ pub struct OpQueue {
     queue: RingBuffer<SlowOp, 32>,
 }
 
-include!("../calibration_data.rs");
-
-fn default_shoulder_config() -> brachiograph::pwm::Pwm {
-    brachiograph::pwm::Pwm {
-        inc: SHOULDER_INC.iter().copied().collect(),
-        dec: SHOULDER_DEC.iter().copied().collect(),
-    }
-}
-
-fn default_elbow_config() -> brachiograph::pwm::Pwm {
-    brachiograph::pwm::Pwm {
-        inc: ELBOW_INC.iter().copied().collect(),
-        dec: ELBOW_DEC.iter().copied().collect(),
-    }
-}
-
 impl OpQueue {
     fn enqueue(&mut self, op: SlowOp) -> Result<(), ()> {
         if self.queue.is_full() {
@@ -70,25 +54,25 @@ impl Pwms {
             elbow,
             pen,
         };
-        pwms.set_shoulder(pos.shoulder);
-        pwms.set_elbow(pos.elbow);
-        pwms.set_pen(pos.pen);
+        pwms.set(pos);
         pwms.shoulder.enable();
         pwms.elbow.enable();
         pwms.pen.enable();
         pwms
     }
 
-    pub fn set_shoulder(&mut self, duty: u16) {
-        self.shoulder.set_duty(duty);
+    pub fn set(&mut self, pos: ServoPosition) {
+        self.shoulder.set_duty(pos.shoulder);
+        self.elbow.set_duty(pos.elbow);
+        self.pen.set_duty(pos.pen);
     }
 
-    pub fn set_elbow(&mut self, duty: u16) {
-        self.elbow.set_duty(duty);
-    }
-
-    pub fn set_pen(&mut self, duty: u16) {
-        self.pen.set_duty(duty);
+    pub fn get(&self) -> ServoPosition {
+        ServoPosition {
+            shoulder: self.shoulder.get_duty(),
+            elbow: self.elbow.get_duty(),
+            pen: self.pen.get_duty(),
+        }
     }
 }
 
@@ -222,6 +206,7 @@ mod app {
     fn handle_fast_op(
         op_queue: &mut OpQueue,
         state: &mut Brachiograph,
+        pwms: &mut Pwms,
         serial: &mut UsbSerial,
         op: FastOp,
     ) {
@@ -230,23 +215,30 @@ mod app {
                 op_queue.clear();
                 let _ = serial.send(Resp::Ack);
             }
-            FastOp::Calibrate(joint, dir, calib) => state.change_calibration(joint, dir, calib),
+            FastOp::Calibrate(joint, dir, calib) => {
+                state.change_calibration(joint, dir, calib);
+                let _ = serial.send(Resp::Ack);
+            }
+            FastOp::GetPosition => {
+                let _ = serial.send(Resp::CurPosition(pwms.get()));
+            }
         }
     }
 
-    #[task(priority = 2, binds = USB_LP_CAN_RX0, shared = [serial, op_queue, state], local = [geom_config])]
+    #[task(priority = 2, binds = USB_LP_CAN_RX0, shared = [serial, op_queue, state, pwms], local = [geom_config])]
     fn usb_rx0(cx: usb_rx0::Context) {
         let mut serial = cx.shared.serial;
         let mut op_queue = cx.shared.op_queue;
         let mut state = cx.shared.state;
+        let mut pwms = cx.shared.pwms;
         let geom_config = cx.local.geom_config;
-        (&mut serial, &mut op_queue, &mut state).lock(|serial, op_queue, state| {
+        (&mut serial, &mut op_queue, &mut state, &mut pwms).lock(|serial, op_queue, state, pwms| {
             if !serial.poll() {
                 return;
             }
             while let Some(op) = serial.read() {
                 match op {
-                    Op::Fast(op) => handle_fast_op(op_queue, state, serial, op),
+                    Op::Fast(op) => handle_fast_op(op_queue, state, pwms, serial, op),
                     Op::Slow(op) => {
                         if validate_slow_op(geom_config, &op) {
                             if op_queue.enqueue(op).is_err() {
@@ -278,9 +270,7 @@ mod app {
                 + now.duration_since_epoch().convert();
             let servos = state.update(geom_now);
 
-            pwms.set_shoulder(servos.shoulder);
-            pwms.set_elbow(servos.elbow);
-            pwms.set_pen(servos.pen);
+            pwms.set(servos);
 
             if let Some(resting) = state.resting() {
                 if let Some(op) = op_queue.queue.peek() {
@@ -310,6 +300,8 @@ mod app {
                 if let Some(SlowOp::ChangePosition(delta)) = op_queue.queue.peek() {
                     calibrating.delta(*delta);
                     op_queue.queue.dequeue();
+                    let servos = state.update(geom_now);
+                    pwms.set(servos);
                 }
             }
 

@@ -64,25 +64,22 @@ pub enum State {
     Moving(Movement, PenState),
     /// Putting the pen either up or down (at a given point, and finishing at a given time).
     Lifting(Point, PenState, Instant),
-    /// In calibration mode, the brachiograph takes movement commands in terms of pwm duties instead
-    /// of positions.
-    Calibrating(ServoPosition, PenState),
 }
 
 impl State {
     /// Update this state to the new `now`.
     ///
     /// Returns the current position of the hand.
-    pub fn update(&mut self, now: Instant) -> Position {
+    pub fn update(&mut self, now: Instant) -> Point {
         match self {
-            State::Resting(pos, ..) => Position::Cooked(*pos),
+            State::Resting(pos, ..) => *pos,
             State::Moving(movement, pen) => {
                 if movement.is_finished(now) {
                     let ret = movement.target;
                     *self = State::Resting(ret, *pen);
-                    Position::Cooked(ret)
+                    ret
                 } else {
-                    Position::Cooked(movement.interpolate(now))
+                    movement.interpolate(now)
                 }
             }
             State::Lifting(pos, pen, until) => {
@@ -90,9 +87,8 @@ impl State {
                 if now >= *until {
                     *self = State::Resting(ret, *pen);
                 }
-                Position::Cooked(ret)
+                ret
             }
-            State::Calibrating(pos, _) => Position::Raw(*pos),
         }
     }
 
@@ -103,15 +99,14 @@ impl State {
 }
 
 /// The state of a brachiograph.
+// TODO: maybe it makes sense to separate the "geometric" brachiograph and have an extra layer that
+// adds calibration
 #[derive(Clone)]
 pub struct Brachiograph {
     config: geom::Config,
-    calib: Calibration,
     // Target speed, in units per second.
     speed: Fixed,
     state: State,
-    // For the hysteresis correction, we need to keep track of the previous angle.
-    last_angles: Angles,
 }
 
 /// A brachiograph that is resting, ready to undertake another action.
@@ -122,11 +117,13 @@ pub struct RestingBrachiograph<'a> {
 }
 
 /// A brachiograph that is resting, ready to undertake another action.
+/*
 pub struct CalibratingBrachiograph<'a> {
     inner: &'a mut Brachiograph,
     pos: ServoPosition,
     pen: PenState,
 }
+*/
 
 impl<'a> RestingBrachiograph<'a> {
     // TODO: error type
@@ -174,6 +171,7 @@ impl<'a> RestingBrachiograph<'a> {
     }
 }
 
+/*
 impl<'a> CalibratingBrachiograph<'a> {
     pub fn delta(mut self, delta: ServoPositionDelta) {
         self.pos.shoulder =
@@ -183,6 +181,7 @@ impl<'a> CalibratingBrachiograph<'a> {
         self.inner.state = State::Calibrating(self.pos, self.pen);
     }
 }
+*/
 
 impl Brachiograph {
     pub fn new(x: impl ToFixed, y: impl ToFixed) -> Brachiograph {
@@ -194,10 +193,8 @@ impl Brachiograph {
             // Note that we only ever use the default config, whose validity is checked in the tests.
             // If we ever use a non-default config, make sure to check validity at runtime.
             config: Default::default(),
-            calib: Default::default(),
             state: State::Resting(pos, PenState::Up),
             speed: Fixed::from_num(4),
-            last_angles: Angles::default(),
         }
     }
 
@@ -207,7 +204,7 @@ impl Brachiograph {
 
     pub fn pen(&self, now: Instant) -> PenState {
         match self.state {
-            State::Resting(_, pen) | State::Moving(_, pen) | State::Calibrating(_, pen) => pen,
+            State::Resting(_, pen) | State::Moving(_, pen) => pen,
             State::Lifting(_, pen, finished) => {
                 if now >= (finished - Duration::millis(400)) {
                     pen
@@ -230,6 +227,7 @@ impl Brachiograph {
         }
     }
 
+    /*
     pub fn calibrating(&mut self) -> Option<CalibratingBrachiograph<'_>> {
         if let State::Calibrating(pos, pen) = &self.state {
             Some(CalibratingBrachiograph {
@@ -250,33 +248,12 @@ impl Brachiograph {
             (Joint::Elbow, Direction::Decreasing) => self.calib.elbow.dec = calib.data,
         }
     }
+    */
 
-    pub fn update(&mut self, now: Instant) -> ServoPosition {
-        let pen = self.pen(now);
-        let pen = self.calib.pen.duty(pen);
-        match self.state.update(now) {
-            Position::Raw(pos) => pos,
-            Position::Cooked(pos) => {
-                // FIXME: unwraps. Should we store both position and angles?
-                let angles = self.config.at_coord(pos.x, pos.y).unwrap();
-                let shoulder = self
-                    .calib
-                    .shoulder
-                    .duty(self.last_angles.shoulder, angles.shoulder)
-                    .unwrap();
-                let elbow = self
-                    .calib
-                    .shoulder
-                    .duty(self.last_angles.elbow, angles.elbow)
-                    .unwrap();
-                self.last_angles = angles;
-                ServoPosition {
-                    shoulder,
-                    elbow,
-                    pen,
-                }
-            }
-        }
+    pub fn update(&mut self, now: Instant) -> Angles {
+        let pos = self.state.update(now);
+        // FIXME: unwrap. Should we store both position and angles?
+        self.config.at_coord(pos.x, pos.y).unwrap()
     }
 }
 
@@ -428,7 +405,7 @@ impl defmt::Format for ServoCalibration {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum Joint {
     Shoulder,
@@ -453,7 +430,7 @@ impl core::ops::Not for PenState {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
 pub enum Direction {
     Increasing,
@@ -462,25 +439,17 @@ pub enum Direction {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(target_os = "none", derive(defmt::Format))]
-pub enum SlowOp {
+pub enum Op {
+    // Slow ops
     ChangePosition(ServoPositionDelta),
     MoveTo(Point),
     PenUp,
     PenDown,
-}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(target_os = "none", derive(defmt::Format))]
-pub enum FastOp {
+    // Fast ops
     Cancel,
     Calibrate(Joint, Direction, ServoCalibration),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(target_os = "none", derive(defmt::Format))]
-pub enum Op {
-    Slow(SlowOp),
-    Fast(FastOp),
+    GetPosition,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

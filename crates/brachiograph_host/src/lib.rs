@@ -1,6 +1,6 @@
 use anyhow::bail;
-use brachiograph::Angle;
-use brachiologo::BuiltIn;
+use brachiograph::{Angle, Fixed, Op, Resp};
+use brachiologo::TurtleCmd;
 use kurbo::{Point, Rect, Vec2};
 use std::io::{BufRead, BufReader};
 
@@ -40,6 +40,7 @@ fn detect_port() -> Option<Box<dyn SerialPort>> {
     None
 }
 
+/*
 // TODO: this should go in the brachiograph crate and be used in the runner
 #[derive(Debug)]
 pub enum Op {
@@ -49,7 +50,7 @@ pub enum Op {
 }
 
 impl Op {
-    /// Change coordinates of this op so that the original original is in the center of the rect,
+    /// Change coordinates of this op so that the original origin is in the center of the rect,
     /// and clamp it to remain inside the rect.
     pub fn center_and_clamp(self, rect: &Rect) -> Self {
         let clamp = |x: f64, y: f64| Op::MoveTo {
@@ -62,6 +63,7 @@ impl Op {
         }
     }
 }
+*/
 
 pub struct Serial {
     write: Box<dyn SerialPort>,
@@ -80,52 +82,44 @@ impl Serial {
         self.write.name()
     }
 
-    // Send a single op element to brachiograph, blocking if necessary.
-    pub fn send(&mut self, op: Op) -> anyhow::Result<()> {
-        log::debug!("{:?}", op);
-        let mut resp = String::new();
+    pub fn send(&mut self, op: Op) -> anyhow::Result<Resp> {
+        println!("{:?}", op);
         loop {
-            match op {
-                Op::PenDown => {
-                    writeln!(&mut self.write, "pendown")?;
-                }
-                Op::PenUp => {
-                    writeln!(&mut self.write, "penup")?;
-                }
-                Op::MoveTo { x, y } => {
-                    let x = x.round() as i32;
-                    let y = y.round() as i32;
-                    writeln!(&mut self.write, "moveto {x} {y}")?;
-                }
-            }
+            let msg = postcard::to_stdvec_cobs(&op)?;
+            self.write.write_all(&msg)?;
 
-            resp.clear();
-            self.read.read_line(&mut resp)?;
-            log::debug!("read {resp:?}");
-            match resp.trim() {
-                "ack" => break,
-                "queue full" => {
+            let mut read = self.read.fill_buf()?.to_vec();
+            let (msg, remaining) = postcard::take_from_bytes_cobs(&mut read)?;
+            let remaining_len = remaining.len();
+            drop(remaining);
+            self.read.consume(read.len() - remaining_len);
+            match dbg!(msg) {
+                Resp::QueueFull => {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     continue;
                 }
-                resp => bail!("Unexpected response: {resp:?}"),
+                Resp::Nack => bail!("error (TODO: better message)"),
+                other => return Ok(other),
             }
         }
-
-        Ok(())
     }
 }
 
-pub fn interpret<'input>(steps: &[BuiltIn]) -> Vec<Op> {
+pub fn interpret<'input>(steps: &[TurtleCmd]) -> Vec<Op> {
     let mut pos = Point::ORIGIN;
     let mut angle = Angle::from_degrees(90);
     let mut ret = Vec::new();
 
-    let mv = |pt: Point| Op::MoveTo { x: pt.x, y: pt.y };
+    let mv = |pt: Point| {
+        Op::MoveTo(brachiograph::Point {
+            x: Fixed::from_num(pt.x),
+            y: Fixed::from_num(pt.y),
+        })
+    };
 
     for step in steps.iter().copied() {
         match step {
-            brachiologo::BuiltIn::Arc { degrees, radius } => {
+            brachiologo::TurtleCmd::Arc { degrees, radius } => {
                 // Arc does not move the turtle or change the heading.
                 let start = pos + Vec2::from_angle(angle.radians().to_num()) * radius;
                 ret.push(Op::PenUp);
@@ -141,25 +135,24 @@ pub fn interpret<'input>(steps: &[BuiltIn]) -> Vec<Op> {
                 ret.push(mv(pos));
                 ret.push(Op::PenDown);
             }
-            brachiologo::BuiltIn::Forward(dist) => {
+            brachiologo::TurtleCmd::Forward(dist) => {
                 pos += Vec2::from_angle(angle.radians().to_num()) * dist;
                 ret.push(mv(pos));
             }
-            brachiologo::BuiltIn::Back(dist) => {
+            brachiologo::TurtleCmd::Back(dist) => {
                 pos -= Vec2::from_angle(angle.radians().to_num()) * dist;
                 ret.push(mv(pos));
             }
-            brachiologo::BuiltIn::Left(ang) => {
+            brachiologo::TurtleCmd::Left(ang) => {
                 angle += Angle::from_degrees(ang);
             }
-            brachiologo::BuiltIn::Right(ang) => {
+            brachiologo::TurtleCmd::Right(ang) => {
                 angle += Angle::from_degrees(ang);
             }
-            brachiologo::BuiltIn::ClearScreen => {}
-            brachiologo::BuiltIn::PenUp => {
+            brachiologo::TurtleCmd::PenUp => {
                 ret.push(Op::PenUp);
             }
-            brachiologo::BuiltIn::PenDown => {
+            brachiologo::TurtleCmd::PenDown => {
                 ret.push(Op::PenDown);
             }
         }

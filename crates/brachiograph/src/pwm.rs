@@ -1,8 +1,6 @@
 use arrayvec::ArrayVec;
 
-use crate::{Angle, Fixed, PenState};
-
-type Frac = fixed::types::U0F16;
+use crate::{Angle, Angles, Fixed, PenState, ServoPosition};
 
 #[derive(Debug, Clone)]
 pub struct Calibration {
@@ -17,6 +15,30 @@ impl Default for Calibration {
             shoulder: Pwm::shoulder(),
             elbow: Pwm::elbow(),
             pen: TogglePwm::pen(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CalibratedPosition {
+    pub calib: Calibration,
+    // For the hysteresis correction, we need to store the previous angles.
+    pub last_angles: Angles,
+}
+
+impl CalibratedPosition {
+    pub fn update(&mut self, angles: Angles, pen: PenState) -> ServoPosition {
+        let shoulder = self
+            .calib
+            .shoulder
+            .duty(self.last_angles.shoulder, angles.shoulder);
+        let elbow = self.calib.elbow.duty(self.last_angles.elbow, angles.elbow);
+        let pen = self.calib.pen.duty(pen);
+        self.last_angles = angles;
+        ServoPosition {
+            shoulder,
+            elbow,
+            pen,
         }
     }
 }
@@ -41,19 +63,19 @@ pub struct TogglePwm {
 impl Pwm {
     pub fn shoulder() -> Pwm {
         Pwm {
-            inc: [(-50, 1194), (110, 306)].into_iter().collect(),
-            dec: [(-50, 1194), (110, 306)].into_iter().collect(),
+            inc: [(-45, 2333), (120, 500)].into_iter().collect(),
+            dec: [(-45, 2333), (120, 500)].into_iter().collect(),
         }
     }
 
     pub fn elbow() -> Pwm {
         Pwm {
-            inc: [(-80, 1194), (80, 306)].into_iter().collect(),
-            dec: [(-80, 1194), (80, 306)].into_iter().collect(),
+            inc: [(-60, 2167), (75, 833)].into_iter().collect(),
+            dec: [(-60, 2167), (75, 833)].into_iter().collect(),
         }
     }
 
-    pub fn duty(&self, last_angle: Angle, angle: Angle) -> Option<u16> {
+    pub fn duty(&self, last_angle: Angle, angle: Angle) -> u16 {
         let deg = angle.degrees();
         let slices = if angle.degrees() > last_angle.degrees() {
             self.inc.windows(2)
@@ -63,15 +85,19 @@ impl Pwm {
         for slice in slices {
             let before = Fixed::from_num(slice[0].0);
             let after = Fixed::from_num(slice[1].0);
-            if before <= deg && deg <= after {
+            if deg < before {
+                // We cannot represent an angle so small, so return the smallest angle we have.
+                return slice[0].1;
+            } else if deg <= after {
                 let lambda = (deg - before) / (after - before);
                 let mu = Fixed::from_num(1i32) - lambda;
                 let before: Fixed = Fixed::from(slice[0].1);
                 let after: Fixed = Fixed::from(slice[1].1);
-                return Some((before * mu + after * lambda).round().to_num());
+                return (before * mu + after * lambda).round().to_num();
             }
         }
-        return None;
+        // We cannot represent an angle so large, so return the largest angle we have.
+        return self.inc.last().unwrap().1;
     }
 }
 
@@ -98,10 +124,6 @@ mod tests {
     #[test]
     fn precomputed_duties() {
         let sh = Pwm::shoulder();
-        assert_approx(
-            916,
-            sh.duty(Angle::from_degrees(0), Angle::from_degrees(0))
-                .unwrap(),
-        );
+        assert_approx(916, sh.duty(Angle::from_degrees(0), Angle::from_degrees(0)));
     }
 }

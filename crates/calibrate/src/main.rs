@@ -1,205 +1,189 @@
-use std::{
-    collections::BTreeMap,
-    io::{BufRead, BufReader, Write},
-    path::PathBuf,
-};
+use std::{io::Write, path::PathBuf};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
+use brachiograph::{Direction, Joint, Op, Resp, ServoPositionDelta};
+use brachiograph_host::Serial;
 use clap::Parser;
-use serialport::SerialPort;
-use termion::{
-    event::Key,
-    input::{Keys, TermRead},
-    raw::{IntoRawMode, RawTerminal},
-};
-
-struct Serial {
-    write: Box<dyn SerialPort>,
-    read: BufReader<Box<dyn SerialPort>>,
-}
-
-impl Serial {
-    fn get_duties(&mut self) -> anyhow::Result<(u16, u16)> {
-        while self.write.write(b"p")? != 1 {}
-        self.write.flush()?;
-        let mut buf = String::new();
-        BufRead::read_line(&mut self.read, &mut buf)?;
-        let mut nums = buf
-            .trim()
-            .split_ascii_whitespace()
-            .map(|s| s.parse::<u16>());
-        let sh = nums.next().ok_or_else(|| anyhow!("missing shoulder"))??;
-        let el = nums.next().ok_or_else(|| anyhow!("missing elbow"))??;
-        Ok((sh, el))
-    }
-}
-
-fn read_num<R: std::io::Read, W: std::io::Write>(
-    keys: &mut Keys<R>,
-    raw: &mut RawTerminal<W>,
-) -> anyhow::Result<Option<i16>> {
-    let mut buf = String::new();
-
-    write!(raw, "\r\nDegrees? ")?;
-    raw.flush()?;
-    while let Some(key) = keys.next().transpose()? {
-        match key {
-            Key::Char('\n') => {
-                write!(raw, "\n")?;
-                return Ok(buf.parse().ok());
-            }
-            Key::Backspace => {
-                buf.pop();
-                write!(raw, "{}\r", termion::clear::CurrentLine)?;
-                write!(raw, "Degrees? {}", buf)?;
-                raw.flush()?;
-            }
-            Key::Char(c) => {
-                buf.push(c);
-                write!(raw, "{}", c)?;
-                raw.flush()?;
-            }
-            _ => {}
-        }
-    }
-
-    Ok(None)
-}
+use termion::{event::Key, input::TermRead, raw::IntoRawMode};
 
 #[derive(Parser, Debug)]
 struct Args {
-    tty: String,
+    #[clap(long)]
+    tty: Option<String>,
 
     #[clap(short)]
     output: PathBuf,
 }
 
-#[derive(Copy, Clone)]
-struct CalibKind {
-    shoulder: bool,
-    increasing: bool,
+fn duty_delta(c: char) -> Option<ServoPositionDelta> {
+    let mag = if c.is_ascii_uppercase() { 10 } else { 1 };
+    let (shoulder, elbow) = match c.to_ascii_lowercase() {
+        'k' => (1, 0),
+        'j' => (-1, 0),
+        'f' => (0, 1),
+        'd' => (0, -1),
+        _ => return None,
+    };
+    Some(ServoPositionDelta {
+        shoulder: shoulder * mag,
+        elbow: elbow * mag,
+    })
 }
 
-impl std::fmt::Display for CalibKind {
+static SHOULDER_ANGLES: &[(i16, &str)] = &[
+    (-45, "0"),
+    (-30, "1"),
+    (0, "2"),
+    (15, "3"),
+    (30, "4"),
+    (45, "5"),
+    (60, "6"),
+    (75, "7"),
+    (90, "8"),
+    (105, "9"),
+    (120, "10"),
+];
+
+static ELBOW_ANGLES: &[(i16, &str)] = &[
+    (-60, "a"),
+    (-45, "b"),
+    (-30, "c"),
+    (-15, "d"),
+    (0, "e"),
+    (15, "f"),
+    (30, "g"),
+    (45, "h"),
+    (60, "i"),
+    (75, "j"),
+];
+
+struct Instruction {
+    joint: Joint,
+    direction: Direction,
+    target_angle: i16,
+    target_name: &'static str,
+}
+
+fn calibration_instructions() -> impl Iterator<Item = Instruction> {
+    fn one(
+        angles: &'static [(i16, &'static str)],
+        joint: Joint,
+        direction: Direction,
+    ) -> impl Iterator<Item = Instruction> {
+        let angles = if direction == Direction::Increasing {
+            Box::new(angles.iter()) as Box<dyn Iterator<Item = _>>
+        } else {
+            Box::new(angles.iter().rev()) as Box<dyn Iterator<Item = _>>
+        };
+        angles.map(move |&(target_angle, target_name)| Instruction {
+            joint,
+            direction,
+            target_angle,
+            target_name,
+        })
+    }
+    one(SHOULDER_ANGLES, Joint::Shoulder, Direction::Increasing)
+        .chain(one(SHOULDER_ANGLES, Joint::Shoulder, Direction::Decreasing))
+        .chain(one(ELBOW_ANGLES, Joint::Elbow, Direction::Increasing))
+        .chain(one(ELBOW_ANGLES, Joint::Elbow, Direction::Decreasing))
+}
+
+impl std::fmt::Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let which = if self.shoulder { "shoulder" } else { "elbow" };
-        let dir = if self.increasing { "inc" } else { "dec" };
-        write!(f, "{}/{}", which, dir)
+        let direction = if self.direction == Direction::Increasing {
+            "increase"
+        } else {
+            "decrease"
+        };
+        let joint = if self.joint == Joint::Shoulder {
+            "shoulder"
+        } else {
+            "elbow"
+        };
+        let name = self.target_name;
+        f.write_fmt(format_args!("{direction} {joint} to \"{name}\""))
     }
 }
 
-#[derive(Debug, Default)]
+// TODO: make this shared, for deserializing in the feeder.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Calib {
-    shoulder_inc: BTreeMap<i16, u16>,
-    shoulder_dec: BTreeMap<i16, u16>,
-    elbow_inc: BTreeMap<i16, u16>,
-    elbow_dec: BTreeMap<i16, u16>,
+    shoulder_inc: Vec<(i16, u16)>,
+    shoulder_dec: Vec<(i16, u16)>,
+    elbow_inc: Vec<(i16, u16)>,
+    elbow_dec: Vec<(i16, u16)>,
 }
 
 impl Calib {
-    fn table(&mut self, kind: CalibKind) -> &mut BTreeMap<i16, u16> {
-        match (kind.shoulder, kind.increasing) {
-            (true, true) => &mut self.shoulder_inc,
-            (true, false) => &mut self.shoulder_dec,
-            (false, true) => &mut self.elbow_inc,
-            (false, false) => &mut self.elbow_dec,
-        }
+    fn push(&mut self, joint: Joint, dir: Direction, angle: i16, duty: u16) {
+        let list = match (joint, dir) {
+            (Joint::Shoulder, Direction::Increasing) => &mut self.shoulder_inc,
+            (Joint::Shoulder, Direction::Decreasing) => &mut self.shoulder_dec,
+            (Joint::Elbow, Direction::Increasing) => &mut self.elbow_inc,
+            (Joint::Elbow, Direction::Decreasing) => &mut self.elbow_dec,
+        };
+        list.push((angle, duty));
     }
 
-    fn print_one<W: Write>(
-        &self,
-        w: &mut W,
-        name: &str,
-        table: &BTreeMap<i16, u16>,
-    ) -> anyhow::Result<()> {
-        write!(w, "static {name}: &'static [(i16, u16)] = &[\n")?;
-        for (deg, us) in table {
-            write!(w, "\t({deg}, {us}),\n")?;
-        }
-        write!(w, "];\n")?;
-
-        Ok(())
-    }
-
-    fn print<W: Write>(&self, mut w: W) -> anyhow::Result<()> {
-        self.print_one(&mut w, "SHOULDER_INC", &self.shoulder_inc)?;
-        self.print_one(&mut w, "SHOULDER_DEC", &self.shoulder_dec)?;
-        self.print_one(&mut w, "ELBOW_INC", &self.elbow_inc)?;
-        self.print_one(&mut w, "ELBOW_DEC", &self.elbow_dec)?;
-        Ok(())
+    fn sort(&mut self) {
+        self.shoulder_inc.sort();
+        self.shoulder_dec.sort();
+        self.elbow_inc.sort();
+        self.elbow_dec.sort();
     }
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let serial = serialport::new(&args.tty, 9600)
-        .timeout(std::time::Duration::from_secs(60))
-        .open()?;
-    let mut serial = Serial {
-        read: BufReader::with_capacity(128, serial.try_clone().unwrap()),
-        write: serial,
-    };
 
-    let mut kind = CalibKind {
-        shoulder: true,
-        increasing: true,
-    };
-    let mut calib = Calib::default();
+    let mut serial = Serial::detect()
+        .ok_or_else(|| anyhow!("failed to detect brachiograph! Is it on and plugged in?"))?;
+
     let stdout = std::io::stdout();
     let stdout = stdout.lock();
     let stdin = std::io::stdin();
     let stdin = stdin.lock();
     let mut raw = stdout.into_raw_mode()?;
     let mut keys = stdin.keys();
+    let mut calib = Calib::default();
 
-    write!(&mut raw, "{}\r[{}] ", termion::clear::CurrentLine, kind)?;
-    raw.flush()?;
-
-    while let Some(key) = keys.next().transpose()? {
-        match key {
-            Key::Char('q') => {
-                write!(&mut raw, "{}\rGoodbye!\r\n", termion::clear::CurrentLine)?;
-                break;
-            }
-            Key::Char('m') => {
-                let deg = read_num(&mut keys, &mut raw)?;
-                if let Some(deg) = deg {
-                    let (sh, el) = serial.get_duties()?;
-                    let duty = if kind.shoulder { sh } else { el };
-                    calib.table(kind).insert(deg, duty);
-                    write!(&mut raw, "added {} entry {} for {}°\r\n", kind, duty, deg)?;
-                }
-            }
-            Key::Char('x') => {
-                let deg = read_num(&mut keys, &mut raw)?;
-                if let Some(deg) = deg {
-                    calib.table(kind).remove(&deg);
-                    write!(&mut raw, "deleted {} entry for {}°\r\n", kind, deg)?;
-                }
-            }
-            Key::Char('p') => {
-                // Print the current calibration to the screen.
-                write!(&mut raw, "{}\r", termion::clear::CurrentLine)?;
-                calib.print(&mut raw)?;
-            }
-            Key::Char('w') => {
-                // Write the current calibration to a file.
-                let out = std::fs::File::create(&args.output)?;
-                calib.print(out)?;
-            }
-            Key::Char(c) => {
-                if "dDfFjJkK".find(c).is_some() {
-                    kind.shoulder = "jJkK".find(c).is_some();
-                    kind.increasing = "kKfF".find(c).is_some();
-                    serial.write.write(&[c as u8])?;
-                    serial.write.flush()?;
-                }
-            }
-            _ => {}
-        }
-        write!(&mut raw, "{}\r[{}] ", termion::clear::CurrentLine, kind)?;
+    for inst in calibration_instructions() {
+        write!(&mut raw, "{}\r[{}] ", termion::clear::CurrentLine, inst)?;
         raw.flush()?;
+        while let Some(key) = keys.next().transpose()? {
+            match key {
+                Key::Char('q') => {
+                    write!(&mut raw, "{}\rGoodbye!\r\n", termion::clear::CurrentLine)?;
+                    return Ok(());
+                }
+                Key::Char('\n') => {
+                    let duties = serial.send(Op::GetPosition)?;
+                    let Resp::CurPosition(duties) = duties else {
+                        bail!("unexpected response {:?} to GetPosition", duties);
+                    };
+                    // TODO: we could keep track of duties ourselves instead of querying...
+                    let duty = if inst.joint == Joint::Shoulder {
+                        duties.shoulder
+                    } else {
+                        duties.elbow
+                    };
+                    calib.push(inst.joint, inst.direction, inst.target_angle, duty);
+                    break;
+                }
+                Key::Char(c) => {
+                    if let Some(delta) = duty_delta(c) {
+                        serial.send(Op::ChangePosition(delta))?;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
+
+    calib.sort();
+
+    let data = postcard::to_allocvec(&calib)?;
+    std::fs::write(args.output, data)?;
 
     Ok(())
 }

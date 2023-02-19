@@ -181,8 +181,9 @@ impl TryFrom<Expr> for String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Copy, Debug, Clone, PartialEq)]
 pub enum TurtleCmd {
+    Arc { degrees: f64, radius: f64 },
     Forward(f64),
     Back(f64),
     Right(f64),

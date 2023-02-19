@@ -11,4 +11,5 @@ brachiograph = { version = "0.1.0", path = "../brachiograph" }
 brachiologo = { version = "0.1.1", path = "../brachiologo" }
 kurbo = "0.9.0"
 log = "0.4.17"
+postcard = { version = "1.0.2", features = ["use-std"] }
 serialport = "4.2.0"

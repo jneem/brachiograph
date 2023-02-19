@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
-use brachiograph::{Angle, Fixed, Op, Resp, SlowOp};
+use brachiograph::{Angle, Fixed, Op, Resp};
 use clap::Parser;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use serialport::SerialPort;
@@ -118,7 +118,7 @@ fn load_logo(path: &Path) -> anyhow::Result<Vec<brachiologo::BuiltIn>> {
     Ok(output)
 }
 
-fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<SlowOp> {
+fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<Op> {
     let mut pos = rect.center();
     let mut angle = Angle::from_degrees(90);
     let mut ret = Vec::new();
@@ -148,10 +148,10 @@ fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<SlowOp> {
             }
             brachiologo::BuiltIn::ClearScreen => {}
             brachiologo::BuiltIn::PenUp => {
-                ret.push(SlowOp::PenUp);
+                ret.push(Op::PenUp);
             }
             brachiologo::BuiltIn::PenDown => {
-                ret.push(SlowOp::PenDown);
+                ret.push(Op::PenDown);
             }
         }
     }
@@ -159,15 +159,15 @@ fn run_turtle(steps: &[brachiologo::BuiltIn], rect: Rect) -> Vec<SlowOp> {
     ret
 }
 
-fn to_ops(path: &BezPath) -> Vec<SlowOp> {
+fn to_ops(path: &BezPath) -> Vec<Op> {
     let mut ret = Vec::new();
 
     for el in path {
         match el {
             PathEl::MoveTo(p) => {
-                ret.push(SlowOp::PenUp);
+                ret.push(Op::PenUp);
                 ret.push(p_to_op(p));
-                ret.push(SlowOp::PenDown);
+                ret.push(Op::PenDown);
             }
             PathEl::LineTo(p) => ret.push(p_to_op(p)),
             _ => unreachable!(),
@@ -177,10 +177,10 @@ fn to_ops(path: &BezPath) -> Vec<SlowOp> {
 }
 
 // Send a single op element to brachiograph, blocking if necessary.
-fn send(serial: &mut Serial, op: SlowOp) -> anyhow::Result<()> {
+fn send(serial: &mut Serial, op: Op) -> anyhow::Result<()> {
     println!("{:?}", op);
     loop {
-        let msg = postcard::to_stdvec_cobs(&Op::Slow(op.clone()))?;
+        let msg = postcard::to_stdvec_cobs(&op)?;
         serial.write.write_all(&msg)?;
 
         let mut read = serial.read.fill_buf()?.to_vec();
@@ -201,9 +201,9 @@ fn send(serial: &mut Serial, op: SlowOp) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn p_to_op(p: impl Into<Point>) -> SlowOp {
+fn p_to_op(p: impl Into<Point>) -> Op {
     let p = p.into();
-    SlowOp::MoveTo(brachiograph::Point {
+    Op::MoveTo(brachiograph::Point {
         x: Fixed::from_num(p.x),
         y: Fixed::from_num(p.y),
     })
@@ -232,7 +232,7 @@ fn main() -> anyhow::Result<()> {
     } else if ext == Some("logo") {
         let turtle = load_logo(&args.input)?;
         send(&mut serial, p_to_op((0., 9.)))?;
-        send(&mut serial, SlowOp::PenDown)?;
+        send(&mut serial, Op::PenDown)?;
         run_turtle(&turtle, Rect::new(-8.0, 5.0, 8.0, 13.0))
     } else {
         bail!("didn't recognize input file type");
@@ -240,7 +240,7 @@ fn main() -> anyhow::Result<()> {
     for op in ops {
         send(&mut serial, op)?;
     }
-    send(&mut serial, SlowOp::PenUp)?;
+    send(&mut serial, Op::PenUp)?;
     send(&mut serial, p_to_op((-8., 8.)))?;
 
     Ok(())
