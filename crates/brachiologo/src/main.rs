@@ -1,6 +1,5 @@
 use brachiologo::Env;
 use clap::Parser;
-use nom::error::{convert_error, VerboseError};
 use std::{path::PathBuf, process::exit};
 
 #[derive(Parser)]
@@ -25,18 +24,24 @@ pub fn main() {
     let (remaining, prog) = match brachiologo::parse::program(input.as_str().into()) {
         Ok(prog) => prog,
         Err(e) => {
-            let nom::Err::Failure(e) = e else {
+            let (nom::Err::Failure(mut e) | nom::Err::Error(mut e)) = e else {
                 panic!("unexpected error");
             };
-            let errors = e
-                .errors
-                .into_iter()
-                .map(|(input, error)| (*input.fragment(), error))
-                .collect();
             println!(
-                "Parse error: {}",
-                convert_error(input.as_str(), VerboseError { errors })
+                "Parse error at {}:{}: {:?}",
+                e.input.location_line(),
+                e.input.get_utf8_column(),
+                e.kind,
             );
+            while let Some(cause) = e.cause {
+                e = *cause;
+                println!(
+                    "Caused by (at {}:{}) {:?}",
+                    e.input.location_line(),
+                    e.input.get_utf8_column(),
+                    e.kind,
+                );
+            }
             exit(1);
         }
     };
