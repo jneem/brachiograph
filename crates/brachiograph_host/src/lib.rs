@@ -83,7 +83,6 @@ impl Serial {
     }
 
     pub fn send(&mut self, op: Op) -> anyhow::Result<Resp> {
-        println!("{:?}", op);
         loop {
             let msg = postcard::to_stdvec_cobs(&op)?;
             self.write.write_all(&msg)?;
@@ -93,7 +92,7 @@ impl Serial {
             let remaining_len = remaining.len();
             drop(remaining);
             self.read.consume(read.len() - remaining_len);
-            match dbg!(msg) {
+            match msg {
                 Resp::QueueFull => {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     continue;

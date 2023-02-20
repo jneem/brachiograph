@@ -6,7 +6,6 @@ pub mod geom;
 pub mod pwm;
 pub use fixed;
 pub use fugit;
-use pwm::Calibration;
 use serde::{Deserialize, Serialize};
 
 /// The type that we use for most of our numerical computations.
@@ -171,18 +170,6 @@ impl<'a> RestingBrachiograph<'a> {
     }
 }
 
-/*
-impl<'a> CalibratingBrachiograph<'a> {
-    pub fn delta(mut self, delta: ServoPositionDelta) {
-        self.pos.shoulder =
-            (self.pos.shoulder as i32 + delta.shoulder as i32).clamp(0, u16::MAX as i32) as u16;
-        self.pos.elbow =
-            (self.pos.elbow as i32 + delta.elbow as i32).clamp(0, u16::MAX as i32) as u16;
-        self.inner.state = State::Calibrating(self.pos, self.pen);
-    }
-}
-*/
-
 impl Brachiograph {
     pub fn new(x: impl ToFixed, y: impl ToFixed) -> Brachiograph {
         let pos = Point {
@@ -200,6 +187,14 @@ impl Brachiograph {
 
     pub fn config(&self) -> &geom::Config {
         &self.config
+    }
+
+    pub fn warp_to(&mut self, x: impl ToFixed, y: impl ToFixed) {
+        let pos = Point {
+            x: x.to_fixed(),
+            y: y.to_fixed(),
+        };
+        self.state = State::Resting(pos, PenState::Up);
     }
 
     pub fn pen(&self, now: Instant) -> PenState {
@@ -226,29 +221,6 @@ impl Brachiograph {
             None
         }
     }
-
-    /*
-    pub fn calibrating(&mut self) -> Option<CalibratingBrachiograph<'_>> {
-        if let State::Calibrating(pos, pen) = &self.state {
-            Some(CalibratingBrachiograph {
-                pos: *pos,
-                pen: *pen,
-                inner: self,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn change_calibration(&mut self, joint: Joint, dir: Direction, calib: ServoCalibration) {
-        match (joint, dir) {
-            (Joint::Shoulder, Direction::Increasing) => self.calib.shoulder.inc = calib.data,
-            (Joint::Shoulder, Direction::Decreasing) => self.calib.shoulder.dec = calib.data,
-            (Joint::Elbow, Direction::Increasing) => self.calib.elbow.inc = calib.data,
-            (Joint::Elbow, Direction::Decreasing) => self.calib.elbow.dec = calib.data,
-        }
-    }
-    */
 
     pub fn update(&mut self, now: Instant) -> Angles {
         let pos = self.state.update(now);
@@ -377,6 +349,21 @@ pub struct ServoPosition {
     pub shoulder: u16,
     pub elbow: u16,
     pub pen: u16,
+}
+
+impl core::ops::Add<ServoPositionDelta> for ServoPosition {
+    type Output = ServoPosition;
+
+    fn add(self, rhs: ServoPositionDelta) -> Self::Output {
+        let shoulder =
+            (self.shoulder as i32 + rhs.shoulder as i32).clamp(0, u16::MAX as i32) as u16;
+        let elbow = (self.elbow as i32 + rhs.elbow as i32).clamp(0, u16::MAX as i32) as u16;
+        ServoPosition {
+            shoulder,
+            elbow,
+            pen: self.pen,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]

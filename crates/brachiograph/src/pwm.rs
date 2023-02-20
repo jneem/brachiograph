@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 
-use crate::{Angle, Angles, Fixed, PenState, ServoPosition};
+use crate::{Angle, Angles, Direction, Fixed, Joint, PenState, ServoCalibration, ServoPosition};
 
 #[derive(Debug, Clone)]
 pub struct Calibration {
@@ -19,7 +19,7 @@ impl Default for Calibration {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CalibratedPosition {
     pub calib: Calibration,
     // For the hysteresis correction, we need to store the previous angles.
@@ -40,6 +40,16 @@ impl CalibratedPosition {
             elbow,
             pen,
         }
+    }
+
+    pub fn change_calibration(&mut self, joint: Joint, dir: Direction, calib: ServoCalibration) {
+        let list = match (joint, dir) {
+            (Joint::Shoulder, Direction::Increasing) => &mut self.calib.shoulder.inc,
+            (Joint::Shoulder, Direction::Decreasing) => &mut self.calib.shoulder.dec,
+            (Joint::Elbow, Direction::Increasing) => &mut self.calib.elbow.inc,
+            (Joint::Elbow, Direction::Decreasing) => &mut self.calib.elbow.dec,
+        };
+        *list = calib.data;
     }
 }
 
