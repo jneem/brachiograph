@@ -3111,6 +3111,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "template"
+version = "0.1.0"
+dependencies = [
+ "brachiograph",
+]
+
+[[package]]
 name = "tendril"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

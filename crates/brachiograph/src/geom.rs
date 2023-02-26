@@ -2,8 +2,8 @@
 
 use crate::{Angle, Angles, Fixed};
 
-use cordic::{asin, atan, sqrt};
-use fixed::traits::ToFixed;
+use cordic::{asin, atan, cos, sin, sqrt};
+use fixed::traits::{FromFixed, ToFixed};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -160,6 +160,16 @@ impl Config {
 
         Ok(Angles { elbow, shoulder })
     }
+
+    pub fn coord_at_angle<T: FromFixed>(&self, angles: Angles) -> (T, T) {
+        let r = Fixed::SQRT_2
+            * self.arm_len
+            * sqrt(Fixed::from_num(1i32) + sin(angles.elbow.radians()));
+        let theta = Fixed::FRAC_PI_2 + Fixed::FRAC_PI_4 + angles.elbow.radians() / 2
+            - angles.shoulder.radians();
+
+        (Fixed::to_num(r * cos(theta)), Fixed::to_num(r * sin(theta)))
+    }
 }
 
 #[cfg(test)]
@@ -174,6 +184,10 @@ mod tests {
         assert!((geom.elbow.degrees() - elbow).abs() < 0.1);
     }
 
+    fn assert_approx_f64(x: f64, y: f64) {
+        assert!((x - y).abs() < 0.01);
+    }
+
     #[test]
     fn precalculated_coords() {
         let b = Config::default();
@@ -181,6 +195,24 @@ mod tests {
         assert_approx(&b.at_coord(0, 11.313).unwrap(), 45, 0);
         assert_approx(&b.at_coord(0, 8).unwrap(), 30, -30);
         assert_approx(&b.at_coord(8, 8).unwrap(), 90, 0);
+    }
+
+    #[test]
+    fn precalculated_inverse() {
+        let b = Config::default();
+        let (x, y) = b.coord_at_angle(Angles {
+            shoulder: Angle::from_degrees(0),
+            elbow: Angle::from_degrees(0),
+        });
+        assert_approx_f64(x, -8.0);
+        assert_approx_f64(y, 8.0);
+
+        let (x, y) = b.coord_at_angle(Angles {
+            shoulder: Angle::from_degrees(45),
+            elbow: Angle::from_degrees(0),
+        });
+        assert_approx_f64(x, 0.0);
+        assert_approx_f64(y, 11.313);
     }
 
     #[test]

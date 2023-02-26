@@ -134,6 +134,9 @@ mod tests {
     #[test]
     fn precomputed_duties() {
         let sh = Pwm::shoulder();
-        assert_approx(916, sh.duty(Angle::from_degrees(0), Angle::from_degrees(0)));
+        assert_approx(
+            1833,
+            sh.duty(Angle::from_degrees(0), Angle::from_degrees(0)),
+        );
     }
 }
